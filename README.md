@@ -46,6 +46,7 @@ This project is ideal for:
 - [Getting Started Guide](docs/getting-started.md) - Set up the project and make your first API calls
 - [API Design Guidelines](docs/api-design.md) - Design conventions and response patterns
 - [Response Format Guide](docs/response-format.md) - Standard response envelopes, pagination, and data formats
+- [Streaming Guide](docs/streaming.md) - SSE and WebSocket streaming endpoints, event payloads, reconnection, and clean close handling
 - [Caching Strategy](docs/caching-strategy.md) - Per-endpoint cache TTLs and configuration
 - [Error Reference](docs/error-reference.md) - All error types, status codes, and suggested fixes
 - [Error Codes](docs/error-codes.md) - HTTP status code reference with descriptions, scenarios, and sample responses
