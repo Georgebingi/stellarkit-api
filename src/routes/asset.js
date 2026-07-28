@@ -4,17 +4,28 @@ const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 const { Asset } = require("@stellar/stellar-sdk");
 const { server, NETWORK } = require("../config/stellar");
+const cacheService = require("../services/cache");
 const { success } = require("../utils/response");
-const { formatBalance } = require("../utils/formatBalance");
 const { assetHoldersRateLimiter } = require("../middleware/rateLimiter");
 const normalizeAssetCode = require("../middleware/normalizeAssetCode");
 const { validateAccountId, validateAssetCode, validateAsset, validateLimit } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { makeAssetNotFoundError } = require("../utils/errors");
-const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
+const { normalizeAsset } = require("../utils/asset");
 router.use(normalizeAssetCode);
 
+const DEFAULT_ASSET_HOLDERS_CACHE_TTL_MS = 30000;
+
+function isFreshRequest(query) {
+  return query.fresh === true || query.fresh === "true";
+}
+
+function getAssetHoldersCacheTtlSeconds() {
+  const parsed = Number.parseInt(process.env.CACHE_TTL_ASSET_HOLDERS_MS, 10);
+  const ttlMs = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ASSET_HOLDERS_CACHE_TTL_MS;
+  return ttlMs / 1000;
+}
 
 function findAssetBalance(account, assetCode, issuer) {
   return (account.balances || []).find(
@@ -27,31 +38,62 @@ function formatAssetHolder(account, assetCode, issuer) {
   const balance = findAssetBalance(account, assetCode, issuer);
 
   return {
-    accountId: account.id || account.account_id,
-    balance: formatBalance(balance ? balance.balance : "0.0000000"),
-    limit: balance ? balance.limit : null,
-    buyingLiabilities: formatBalance(balance ? balance.buying_liabilities : "0.0000000"),
-    sellingLiabilities: formatBalance(balance ? balance.selling_liabilities : "0.0000000"),
-    isAuthorized: balance ? balance.is_authorized : null,
-    isAuthorizedToMaintainLiabilities: balance
-      ? balance.is_authorized_to_maintain_liabilities
-      : null,
-    isClawbackEnabled: balance ? balance.is_clawback_enabled : null,
-    lastModifiedLedger: account.last_modified_ledger,
+    address: account.id || account.account_id,
+    balance: toSevenDecimalString(balance ? balance.balance : "0.0000000"),
   };
 }
 
+function isValidNonNegativeDecimal(value) {
+  if (value === undefined || value === null) return false;
+  const normalized = String(value).trim();
+  return /^\d+(?:\.\d+)?$/.test(normalized);
+}
+
+function parseNonNegativeDecimalQueryParam(rawValue, fieldName) {
+  if (rawValue === undefined) return null;
+  const value = String(rawValue).trim();
+
+  if (value === "" || !isValidNonNegativeDecimal(value)) {
+    const err = new Error(
+      `Query parameter '${fieldName}': must be a non-negative decimal number.`,
+    );
+    err.isValidation = true;
+    err.status = 400;
+    err.field = fieldName;
+    err.receivedValue = rawValue !== undefined ? String(rawValue) : rawValue;
+    err.expectedFormat = "non-negative decimal string, e.g. 123.45";
+    throw err;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    const err = new Error(
+      `Query parameter '${fieldName}': must be a non-negative decimal number.`,
+    );
+    err.isValidation = true;
+    err.status = 400;
+    err.field = fieldName;
+    err.receivedValue = rawValue !== undefined ? String(rawValue) : rawValue;
+    err.expectedFormat = "non-negative decimal string, e.g. 123.45";
+    throw err;
+  }
+
+  return parsed;
+}
+
 /**
- * GET /asset/:code/:issuer/holders
- * Returns paginated accounts that hold a trustline for a specific asset.
- *
- * Query params:
- *   - limit   (number, default: 10, max: 200)
- *   - cursor  (string, pagination cursor from previous response)
- *   - order   ("asc" | "desc", default: "desc")
- *
+ * @route GET /asset/:code/:issuer/holders
+ * @desc Returns paginated accounts that hold a trustline for a specific asset.
+ * @param {string} code - Asset code, e.g. USDC
+ * @param {string} issuer - Asset issuer account ID, e.g. GA5ZSEJYB...
+ * @param {number} [limit=10] - Maximum number of holders to return.
+ * @param {string} [cursor] - Horizon paging cursor for pagination.
+ * @param {string} [order=desc] - Sort direction for holders.
+ * @param {string} [minBalance] - Optional minimum holder balance filter.
+ * @param {string} [maxBalance] - Optional maximum holder balance filter.
+ * @returns {Object[]} List of holders and pagination metadata.
  * @example
- * GET /asset/USDC/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/holders
+ * curl "http://localhost:3000/asset/USDC/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/holders?minBalance=10&maxBalance=100"
  */
 router.get(
   "/:code/:issuer/holders",
@@ -63,6 +105,38 @@ router.get(
 
       const assetCode = code.toUpperCase();
       const { limit, order, cursor } = parsePaginationParams(req.query);
+
+      const fresh = req.query.fresh === "true";
+      const minBalance = parseNonNegativeDecimalQueryParam(
+        req.query.minBalance,
+        "minBalance",
+      );
+      const maxBalance = parseNonNegativeDecimalQueryParam(
+        req.query.maxBalance,
+        "maxBalance",
+      );
+
+      if (minBalance !== null && maxBalance !== null && minBalance > maxBalance) {
+        const err = new Error(
+          "Query parameter 'minBalance' must not be greater than 'maxBalance'.",
+        );
+        err.isValidation = true;
+        err.status = 400;
+        err.field = "minBalance";
+        err.receivedValue = `${req.query.minBalance}`;
+        throw err;
+      }
+
+      const hasBalanceFilter = minBalance !== null || maxBalance !== null;
+      const cacheKey = `asset-holders:${assetCode}:${issuer}:${limit}:${order}:${cursor || ""}`;
+
+      if (!fresh && !hasBalanceFilter) {
+        const cached = cacheService.get(cacheKey);
+        if (cached) {
+          res.set("X-Cache", "HIT");
+          return success(res, cached.holders, { meta: cached.meta });
+        }
+      }
 
       let query = server
         .accounts()
@@ -77,15 +151,31 @@ router.get(
       const holders = records.map((account) =>
         formatAssetHolder(account, assetCode, issuer),
       );
+
+      const filteredHolders = holders.filter((holder) => {
+        const balanceValue = Number(holder.balance);
+        if (minBalance !== null && balanceValue < minBalance) return false;
+        if (maxBalance !== null && balanceValue > maxBalance) return false;
+        return true;
+      });
+
       const lastRecord = records[records.length - 1];
       const nextCursor = lastRecord ? lastRecord.paging_token : null;
 
-      return success(res, {
-        items: holders,
-        total: holders.length,
+      const meta = {
+        count: filteredHolders.length,
         limit,
-        cursor: nextCursor,
-      });
+        order,
+        nextCursor,
+        hasMore: filteredHolders.length === limit,
+      };
+
+      if (!hasBalanceFilter) {
+        cacheService.set(cacheKey, { holders: filteredHolders, meta }, getAssetHoldersCacheTtlSeconds());
+      }
+
+      res.set("X-Cache", "MISS");
+      return success(res, filteredHolders, { meta });
     } catch (err) {
       next(err);
     }
@@ -109,7 +199,7 @@ router.get("/:code/:issuer", async (req, res, next) => {
 
     const assetCode = code.toUpperCase();
     const cacheKey = `asset:${assetCode}:${issuer}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = isFreshRequest(req.query);
 
     // Check cache first (unless fresh=true)
     if (!fresh) {
@@ -149,9 +239,7 @@ router.get("/:code/:issuer", async (req, res, next) => {
     }
 
     const data = {
-      assetCode: asset.asset_code,
-      assetIssuer: asset.asset_issuer,
-      assetType: asset.asset_type,
+      asset: normalizeAsset(asset.asset_code, asset.asset_issuer, asset.asset_type),
       amount: asset.amount,
       numAccounts: asset.num_accounts,
       numClaimableBalances: asset.num_claimable_balances,
@@ -369,9 +457,7 @@ router.get("/search", async (req, res, next) => {
       .call();
 
     const assets = assetsResponse.records.map((a) => ({
-      assetCode: a.asset_code,
-      assetIssuer: a.asset_issuer,
-      assetType: a.asset_type,
+      asset: normalizeAsset(a.asset_code, a.asset_issuer, a.asset_type),
       amount: a.amount,
       numAccounts: a.num_accounts,
       flags: a.flags,
@@ -485,7 +571,7 @@ router.get("/:code/:issuer/price", async (req, res, next) => {
 
     const assetCode = code.toUpperCase();
     const cacheKey = `asset-price:${assetCode}:${issuer}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = isFreshRequest(req.query);
 
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
@@ -513,8 +599,7 @@ router.get("/:code/:issuer/price", async (req, res, next) => {
     );
 
     const data = {
-      assetCode,
-      assetIssuer: issuer,
+      asset: normalizeAsset(assetCode, issuer, "credit_alphanum4"),
       priceInXlm: best.destination_amount,
       sourceAmount: best.source_amount,
       quoteAsset: "XLM",

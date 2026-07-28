@@ -1,5 +1,6 @@
 /**
  * Plain-English translations for common Horizon error codes.
+ * @type {Object.<string, string>}
  */
 const HORIZON_ERROR_MESSAGES = {
   tx_bad_seq: "Transaction sequence number does not match the account's current sequence. Reload the account and rebuild the transaction.",
@@ -14,7 +15,7 @@ const HORIZON_ERROR_MESSAGES = {
   op_no_trust: "The destination account does not have a trustline for this asset. The destination must create a trustline before receiving the asset.",
   op_line_full: "The destination trustline is full. The destination account must raise its trustline limit or reduce the payment amount.",
   op_underfunded: "The source account does not have enough funds. Add funds or reduce the operation amount.",
-  op_low_reserve: "The operation would leave the account below the minimum XLM reserve. Keep more XLM in the account or remove unused subentries.",
+  op_low_reserve: "Account does not have enough XLM to cover the minimum reserve requirement.",
   op_bad_auth: "The operation is missing a required authorization or has an invalid signature.",
   op_no_account: "The account does not exist on the network.",
   op_not_authorized: "The source account is not authorized to perform this operation on the given asset.",
@@ -24,8 +25,17 @@ const HORIZON_ERROR_MESSAGES = {
 /**
  * Translate a Horizon error code to a plain-English message.
  *
- * @param {string} code - Horizon result code (e.g. "tx_bad_seq")
- * @returns {string|null} Human-readable message, or null if not found
+ * @param {string} code - Horizon result code (e.g. "tx_bad_seq" or "op_no_destination")
+ * @returns {string|null} Human-readable message, or null if the error code is not found
+ * @example
+ * // Returns a known error message
+ * translateHorizonError("tx_bad_seq");
+ * // Returns: "Transaction sequence number does not match the account's current sequence. Reload the account and rebuild the transaction."
+ *
+ * @example
+ * // Returns null for an unknown error code
+ * translateHorizonError("tx_unknown_code");
+ * // Returns: null
  */
 function translateHorizonError(code) {
   return HORIZON_ERROR_MESSAGES[code] || null;

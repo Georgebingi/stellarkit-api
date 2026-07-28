@@ -25,6 +25,7 @@ jest.mock("../src/config/stellar", () => ({
 
 const app = require("../src/index");
 const { server } = require("../src/config/stellar");
+const cacheService = require("../src/services/cache");
 
 const ACCOUNT_ID =
   "GDU5LH56CZ7NVKRHYI72QVJC6BS7GAYEIO34HDMICG3H5NSFJJJFHFWL";
@@ -70,6 +71,7 @@ function accountWithBalances() {
 describe("GET /account/:id/trustlines", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    cacheService.flush();
   });
 
   it("returns non-native balances with resolved stellar.toml metadata", async () => {
@@ -153,7 +155,7 @@ describe("GET /account/:id/trustlines", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body.success).toBe(false);
-    expect(res.body.error.type).toBe("ValidationError");
+    expect(res.body.error.type).toBe("InvalidAccountId");
     expect(server.loadAccount).not.toHaveBeenCalled();
   });
 });
