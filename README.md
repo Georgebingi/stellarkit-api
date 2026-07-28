@@ -44,6 +44,9 @@ This project is ideal for:
 - [SDK Migration Guide](docs/sdk-migration.md) — migrating from the JavaScript SDK to the TypeScript SDK
 - [SDK README](sdk/README.md) — JavaScript client usage and method reference
 - [Getting Started Guide](docs/getting-started.md) - Set up the project and make your first API calls
+- [API Design Guidelines](docs/api-design.md) - Design conventions and response patterns
+- [Response Format Guide](docs/response-format.md) - Standard response envelopes, pagination, and data formats
+- [Caching Strategy](docs/caching-strategy.md) - Per-endpoint cache TTLs and configuration
 - [Error Reference](docs/error-reference.md) - All error types, status codes, and suggested fixes
 - [Error Codes](docs/error-codes.md) - HTTP status code reference with descriptions, scenarios, and sample responses
 - [Rate Limiting](docs/rate-limiting.md) - Default limits, configuration, response headers, and retry strategies
@@ -63,6 +66,7 @@ This project is ideal for:
 | GET | `/network/ledger-timing` | Analyze ledger close time consistency | — |
 | GET | `/network/validators` | Current validator list grouped by organisation | `fresh` |
 | GET | `/network/base-fee` | Current network base fee in stroops and XLM | `fresh` |
+| GET | `/network/fee-percentiles` | Fee distribution percentiles from recent activity | `fresh` |
 
 ### Fees
 
@@ -79,6 +83,7 @@ This project is ideal for:
 | GET | `/account/:id/age` | Account age and longevity metrics | — |
 | GET | `/account/:id/balances` | XLM and asset balances | — |
 | GET | `/account/:id/native-balance` | Native XLM balance only | — |
+| GET | `/account/:id/asset-balance/:assetCode/:assetIssuer` | Balance for a specific asset trustline | — |
 | GET | `/account/:id/sequence` | Current sequence number | — |
 | GET | `/account/:id/trustlines` | Trustlines with TOML asset metadata resolved | `assetCode` |
 | GET | `/account/:id/payments` | Payment and create_account operations | `limit`, `order`, `cursor`, `assetCode`, `assetIssuer` |

@@ -361,6 +361,61 @@ router.get("/:id/native-balance", async (req, res, next) => {
 });
 
 /**
+ * GET /account/:id/asset-balance/:assetCode/:assetIssuer
+ * 
+ * Returns the balance for a specific asset trustline without fetching all balances.
+ * 
+ * Path params:
+ *   - id (string, required) — Stellar account public key (G...)
+ *   - assetCode (string, required) — Asset code (e.g., USDC)
+ *   - assetIssuer (string, required) — Issuer public key (G...)
+ * 
+ * Returns:
+ *   - 200: { success: true, data: { asset, balance, limit, buyingLiabilities, sellingLiabilities, isAuthorized } }
+ *   - 404: Asset trustline not found on the account
+ */
+router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) => {
+  try {
+    const { id, assetCode, assetIssuer } = req.params;
+    validateAccountId(id);
+    validateAccountId(assetIssuer);
+    validateAssetCode(assetCode);
+
+    const account = await server.loadAccount(id);
+    const trustline = (account.balances || []).find(
+      (b) => 
+        b.asset_type !== "native" &&
+        b.asset_code === assetCode &&
+        b.asset_issuer === assetIssuer
+    );
+
+    if (!trustline) {
+      const err = new Error(`Account ${id} does not hold asset ${assetCode}:${assetIssuer}`);
+      err.status = 404;
+      err.type = "AssetNotFound";
+      return next(err);
+    }
+
+    const assetType = assetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
+
+    return success(res, {
+      asset: {
+        code: assetCode,
+        issuer: assetIssuer,
+        type: assetType,
+      },
+      balance: trustline.balance,
+      limit: trustline.limit,
+      buyingLiabilities: trustline.buying_liabilities,
+      sellingLiabilities: trustline.selling_liabilities,
+      isAuthorized: trustline.is_authorized,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
+/**
  * GET /account/:id/sequence
  *
  * Returns the current sequence number for an account.
