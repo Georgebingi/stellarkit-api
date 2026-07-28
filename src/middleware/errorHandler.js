@@ -110,6 +110,38 @@ function buildTransactionSubmissionFailedError(horizonError) {
 }
 
 function errorHandler(err, req, res, next) {
+  if (isConnectionError(err)) {
+    const ske = new StellarKitError(
+      "Unable to connect to the Stellar Horizon node.",
+      503,
+      "HorizonUnavailable",
+      null,
+      "Check your HORIZON_URL and verify the node is reachable. See https://status.stellar.org for network status."
+    );
+    logError(503, req, ske.message);
+    return res.status(503).json({
+      success: false,
+      error: ske.toJSON(),
+    });
+  }
+
+  if (err?.isOfferNotFound || isOfferNotFoundError(err)) {
+    const offerId = err?.offerId || "unknown";
+    const message = `Offer '${offerId}' was not found on the Stellar ${NETWORK} network.`;
+    const ske = new StellarKitError(
+      message,
+      404,
+      "OfferNotFound",
+      null,
+      "The offer may have already been filled, cancelled, or the offer ID may be incorrect."
+    );
+    logError(404, req, ske.message);
+    return res.status(404).json({
+      success: false,
+      error: ske.toJSON(),
+    });
+  }
+
   // Horizon errors returned from horizon-client / Stellar SDK
   if (err && err.response && err.response.data) {
     const horizonError = err.response.data;

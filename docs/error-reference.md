@@ -54,6 +54,62 @@ Returned when a request parameter or body value fails validation.
 ### OfferNotFound
 
 Returned when `GET /account/:id/offers?offerId=<id>` is called with an offer ID that does not exist, or when any operation references a non-existent offer.
+StellarKit API Error Reference
+
+Every error response follows the same envelope:
+
+```json
+{
+  "success": false,
+  "error": {
+    "type": "ErrorType",
+    "message": "Human-readable description."
+  }
+}
+```
+
+Some error types include additional fields such as `detail`, `suggestion`, `field`, `receivedValue`, `expectedFormat`, or Horizon-specific `extras`.
+
+For a complete reference of HTTP status codes returned by the API, see [Error Codes](./error-codes.md).
+
+---
+
+## ValidationError
+
+Returned when a request parameter or body value fails validation.
+
+**Status:** `400`
+
+**Example:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "type": "<ErrorType>",
+    "message": "...",
+    ...
+  }
+}
+```
+
+## Error Types
+
+| Type              | HTTP Status | Description                                                           |
+| ----------------- | ----------- | --------------------------------------------------------------------- |
+| `ValidationError` | 400         | Input validation failed (invalid account ID, asset code, limit, etc.) |
+| `HorizonError`    | varies      | Error propagated from the Stellar Horizon API                         |
+| `InsufficientReserve` | 422     | Account does not have enough XLM to cover the minimum reserve requirement |
+| `OfferNotFound`   | 404         | A specific offer was requested but does not exist on the network      |
+| `NotFound`        | 404         | Route or resource not found                                           |
+| `RateLimitError`  | 429         | Too many requests from the same IP                                    |
+| `ServerError`     | 500         | Unexpected internal error                                             |
+
+---
+
+### OfferNotFound
+
+Returned when `GET /account/:id/offers?offerId=<id>` is called with an offer ID that does not exist, or when any operation references a non-existent offer.
 
 **Example response:**
 
