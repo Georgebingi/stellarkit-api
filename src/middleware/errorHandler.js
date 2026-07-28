@@ -7,6 +7,7 @@ const logger = require("../utils/logger");
 const { translateHorizonError } = require("../utils/horizonErrors");
 const { mapHorizonErrorToStatus } = require("../utils/horizonStatusMapper");
 const StellarKitError = require("../utils/StellarKitError");
+const { NETWORK } = require("../config/stellar");
 
 /**
  * Logs 4xx and 5xx responses using the structured logger.
@@ -33,7 +34,59 @@ function logError(status, req, message) {
   }
 }
 
+function isConnectionError(err) {
+  return (
+    err?.code === "ECONNREFUSED" ||
+    err?.code === "ENOTFOUND" ||
+    err?.code === "ETIMEDOUT" ||
+    err?.cause?.code === "ECONNREFUSED" ||
+    err?.cause?.code === "ENOTFOUND" ||
+    err?.cause?.code === "ETIMEDOUT"
+  );
+}
+
+function isOfferNotFoundError(err) {
+  const responseData = err?.response?.data || {};
+  const responseText = `${responseData.title || ""} ${responseData.detail || ""}`.toLowerCase();
+  const pathText = `${err?.response?.config?.url || ""} ${err?.response?.request?.path || ""}`.toLowerCase();
+  const looksLikeOfferPath = /\/offers\//.test(pathText);
+  const looksLikeOfferError = /offer/.test(responseText) && /not found|missing|does not exist/.test(responseText);
+  return err?.response?.status === 404 && (looksLikeOfferPath || looksLikeOfferError);
+}
+
 function errorHandler(err, req, res, next) {
+  if (isConnectionError(err)) {
+    const ske = new StellarKitError(
+      "Unable to connect to the Stellar Horizon node.",
+      503,
+      "HorizonUnavailable",
+      null,
+      "Check your HORIZON_URL and verify the node is reachable. See https://status.stellar.org for network status."
+    );
+    logError(503, req, ske.message);
+    return res.status(503).json({
+      success: false,
+      error: ske.toJSON(),
+    });
+  }
+
+  if (err?.isOfferNotFound || isOfferNotFoundError(err)) {
+    const offerId = err?.offerId || "unknown";
+    const message = `Offer '${offerId}' was not found on the Stellar ${NETWORK} network.`;
+    const ske = new StellarKitError(
+      message,
+      404,
+      "OfferNotFound",
+      null,
+      "The offer may have already been filled, cancelled, or the offer ID may be incorrect."
+    );
+    logError(404, req, ske.message);
+    return res.status(404).json({
+      success: false,
+      error: ske.toJSON(),
+    });
+  }
+
   // Horizon errors returned from horizon-client / Stellar SDK
   if (err && err.response && err.response.data) {
     const horizonError = err.response.data;
