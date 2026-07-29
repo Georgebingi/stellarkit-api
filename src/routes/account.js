@@ -15,7 +15,7 @@ const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-const { validateLimit } = require("../utils/validators");
+const { validateLimit, validateISODate } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { validateEffectType } = require("../utils/effectTypes");
 
@@ -830,8 +830,32 @@ router.get("/:id/trades", async (req, res, next) => {
 
     const { limit, order, cursor } = parsePaginationParams(req.query);
     const fresh = req.query.fresh === "true";
+
+    // --- ?startDate / ?endDate validation ---
+    let startDate;
+    let endDate;
+    if (req.query.startDate !== undefined) {
+      startDate = validateISODate(req.query.startDate, "startDate");
+    }
+    if (req.query.endDate !== undefined) {
+      endDate = validateISODate(req.query.endDate, "endDate");
+    }
+    if (startDate && endDate && startDate >= endDate) {
+      const err = new Error(
+        "Query param 'startDate' must be before 'endDate'.",
+      );
+      err.isValidation = true;
+      err.field = "startDate";
+      err.receivedValue = req.query.startDate;
+      err.expectedFormat = "ISO 8601 date earlier than endDate";
+      err.status = 400;
+      throw err;
+    }
+
     const normalizedCursor = cursor || "";
-    const cacheKey = `account-trades:${id}:${limit}:${order}:${normalizedCursor}`;
+    const startKey = startDate ? startDate.toISOString() : "";
+    const endKey = endDate ? endDate.toISOString() : "";
+    const cacheKey = `account-trades:${id}:${limit}:${order}:${normalizedCursor}:${startKey}:${endKey}`;
 
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
@@ -847,7 +871,15 @@ router.get("/:id/trades", async (req, res, next) => {
     const tradeResponse = await query.call();
     const records = tradeResponse.records || [];
 
-    const trades = records.map((trade) => ({
+    const trades = records
+      .filter((trade) => {
+        if (!startDate && !endDate) return true;
+        const t = new Date(trade.ledger_close_time);
+        if (startDate && t < startDate) return false;
+        if (endDate && t > endDate) return false;
+        return true;
+      })
+      .map((trade) => ({
       id: trade.id,
       pagingToken: trade.paging_token,
       ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
