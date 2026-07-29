@@ -112,6 +112,18 @@ const cacheTTL = {
     process.env.CACHE_TTL_CONTRACT_STORAGE_MS,
     15000
   ),
+
+  /** /stellar-toml/:domain — TOML files change very infrequently; 5-minute default */
+  toml: msToSeconds(
+    process.env.CACHE_TTL_TOML_MS,
+    300000
+  ),
+
+  /** /account/:id/signing-keys */
+  signingKeys: msToSeconds(
+    process.env.CACHE_TTL_SIGNING_KEYS_MS,
+    20000
+  ),
 };
 
 module.exports = cacheTTL;
