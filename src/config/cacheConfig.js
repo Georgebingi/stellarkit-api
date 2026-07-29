@@ -112,6 +112,24 @@ const cacheTTL = {
     process.env.CACHE_TTL_CONTRACT_STORAGE_MS,
     15000
   ),
+
+  /** /account/:id/asset-balance/:code/:issuer — single trustline balance lookup */
+  assetBalance: msToSeconds(
+    process.env.CACHE_TTL_ASSET_BALANCE_MS,
+    10000
+  ),
+
+  /** /account/:id/trades — trade history per account */
+  trades: msToSeconds(
+    process.env.CACHE_TTL_TRADES_MS,
+    globalFallbackMs
+  ),
+
+  /** /liquidity-pools/:id/trades — pool trade history */
+  poolTrades: msToSeconds(
+    process.env.CACHE_TTL_POOL_TRADES_MS,
+    globalFallbackMs
+  ),
 };
 
 module.exports = cacheTTL;
