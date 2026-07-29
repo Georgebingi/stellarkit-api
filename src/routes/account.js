@@ -7,13 +7,14 @@ const {
   makeClaimableBalanceNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
+const cacheTTL = require("../config/cacheConfig");
 const { validateAccountId, validateAssetCode } = require("../utils/validators");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-const { validateAccountId, validateLimit } = require("../utils/validators");
+const { validateLimit } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { validateEffectType } = require("../utils/effectTypes");
 
@@ -22,10 +23,45 @@ const { Asset } = require("@stellar/stellar-sdk");
 const { normalizeAsset, normalizeAssetFromString } = require("../utils/asset");
 const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
-const { validateEffectType } = require("../utils/effectTypes");
 
 // Cache TTL for account endpoint responses (in seconds)
 const CACHE_TTL_ACCOUNT = parseInt(process.env.CACHE_TTL_ACCOUNT_MS, 10) / 1000 || 10;
+
+/**
+ * All Stellar Horizon operation types that can appear inside a transaction.
+ * Used to validate the optional ?type= query parameter on the transactions endpoint.
+ * Source: https://developers.stellar.org/docs/data/apis/horizon/api-reference/resources/operations/object
+ */
+const VALID_OPERATION_TYPES = new Set([
+  "create_account",
+  "payment",
+  "path_payment_strict_receive",
+  "path_payment_strict_send",
+  "manage_sell_offer",
+  "manage_buy_offer",
+  "create_passive_sell_offer",
+  "set_options",
+  "change_trust",
+  "allow_trust",
+  "account_merge",
+  "inflation",
+  "manage_data",
+  "bump_sequence",
+  "create_claimable_balance",
+  "claim_claimable_balance",
+  "begin_sponsoring_future_reserves",
+  "end_sponsoring_future_reserves",
+  "revoke_sponsorship",
+  "clawback",
+  "clawback_claimable_balance",
+  "set_trust_line_flags",
+  "liquidity_pool_deposit",
+  "liquidity_pool_withdraw",
+  "invoke_host_function",
+  "bump_footprint_expiration",
+  "restore_footprint",
+  "extend_footprint_ttl",
+]);
 
 function normalizeSignerType(type) {
   const normalized = String(type || "").toLowerCase();
@@ -1706,6 +1742,21 @@ router.get("/:id/sponsorships", async (req, res, next) => {
 
 /**
  * GET /account/:id/freeze-status/:assetCode/:assetIssuer
+ *
+ * Checks authorization (freeze) status for a specific asset trustline.
+ *
+ * Responses are cached per account ID, asset code, and asset issuer to avoid
+ * redundant Horizon calls. Freeze status only changes when the issuer explicitly
+ * modifies authorization flags, making a short TTL appropriate.
+ *
+ * Cache TTL is configurable via CACHE_TTL_FREEZE_CHECK_MS (default: 30 000 ms).
+ *
+ * Query params:
+ *   - fresh (boolean, default: false) — bypasses the cache when set to "true"
+ *
+ * Response headers:
+ *   - X-Cache: HIT  — response served from cache
+ *   - X-Cache: MISS — fetched live from Horizon and stored in cache
  */
 router.get(
   "/:id/freeze-status/:assetCode/:assetIssuer",
@@ -1721,6 +1772,17 @@ router.get(
 
       if (normalizedAssetCode !== "XLM") {
         validateAccountId(assetIssuer);
+      }
+
+      const fresh = req.query.fresh === "true";
+      const cacheKey = `freeze-status:${id}:${normalizedAssetCode}:${assetIssuer}`;
+
+      if (!fresh) {
+        const cached = cacheService.get(cacheKey);
+        if (cached !== undefined) {
+          res.set("X-Cache", "HIT");
+          return success(res, cached);
+        }
       }
 
       const account = await server.loadAccount(id);
@@ -1776,7 +1838,7 @@ router.get(
         return "The trustline is authorized and the account can send and receive this asset normally.";
       })();
 
-      return success(res, {
+      const data = {
         accountId: account.id,
         asset: normalizeAsset(
           normalizedAssetCode,
@@ -1788,7 +1850,11 @@ router.get(
         canSend,
         canReceive,
         detail,
-      });
+      };
+
+      cacheService.set(cacheKey, data, cacheTTL.freezeCheck);
+      res.set("X-Cache", "MISS");
+      return success(res, data);
     } catch (err) {
       handleAccountNotFound(err, next, req.params.id);
     }
@@ -3377,5 +3443,166 @@ router.get("/:id/trustline-health", async (req, res, next) => {
 
 
 
+
+/**
+ * GET /account/:id/transactions
+ *
+ * Returns paginated transaction history for a Stellar account, with an optional
+ * ?type= filter to restrict results to transactions containing a specific operation type.
+ *
+ * Query params:
+ *   - limit  (number, default: 20, max: 200)
+ *   - cursor (string, optional pagination cursor)
+ *   - order  ("asc" | "desc", default: "desc")
+ *   - type   (string, optional) — filter to transactions containing the given operation type
+ *            e.g. ?type=payment, ?type=change_trust, ?type=create_account
+ *
+ * Returns 400 if an unrecognised operation type is supplied, along with a list of valid types.
+ * Omitting the param returns all transactions.
+ *
+ * @example
+ *   GET /account/:id/transactions?type=payment&limit=20
+ *   GET /account/:id/transactions?type=change_trust&order=asc
+ */
+router.get("/:id/transactions", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    // --- ?type= validation ---
+    const rawType = req.query.type;
+    if (rawType !== undefined) {
+      const normalizedType = String(rawType).toLowerCase().trim();
+      if (!VALID_OPERATION_TYPES.has(normalizedType)) {
+        const err = new Error(
+          `Unknown operation type "${rawType}". Valid types are: ${[...VALID_OPERATION_TYPES].sort().join(", ")}.`
+        );
+        err.isValidation = true;
+        err.field = "type";
+        err.receivedValue = rawType;
+        err.expectedFormat = [...VALID_OPERATION_TYPES].sort().join(", ");
+        return next(err);
+      }
+    }
+
+    const { limit, order, cursor } = parsePaginationParams(req.query, 200);
+    const STROOPS_PER_XLM = 10_000_000;
+
+    // Helper to shape a Horizon transaction record into the API response format
+    function formatTx(tx) {
+      const chargedInStroops = parseInt(tx.fee_charged, 10);
+      const opCount = tx.operation_count || 1;
+      const perOpStroops = Math.floor(chargedInStroops / opCount);
+      return {
+        id: tx.id,
+        hash: tx.hash,
+        ledger: typeof tx.ledger === "number" ? tx.ledger : tx.ledger_attr,
+        createdAt: toISOTimestamp(tx.created_at),
+        sourceAccount: tx.source_account,
+        fee: {
+          charged: tx.fee_charged,
+          chargedInXLM: (chargedInStroops / STROOPS_PER_XLM).toFixed(7),
+          max: tx.max_fee,
+          maxInXLM: (parseInt(tx.max_fee, 10) / STROOPS_PER_XLM).toFixed(7),
+          account: tx.fee_account,
+        },
+        feeSummary: {
+          chargedInStroops,
+          chargedInXLM: (chargedInStroops / STROOPS_PER_XLM).toFixed(7),
+          perOperationInStroops: perOpStroops,
+          perOperationInXLM: (perOpStroops / STROOPS_PER_XLM).toFixed(7),
+        },
+        operationCount: tx.operation_count,
+        memoType: tx.memo_type,
+        memo: tx.memo || null,
+        successful: tx.successful,
+        envelopeXdr: tx.envelope_xdr,
+      };
+    }
+
+    // When a ?type= filter is requested, fetch from the operations endpoint
+    // (which supports per-type Horizon-side filtering) then resolve unique
+    // transaction records in parallel.
+    if (rawType !== undefined) {
+      const normalizedType = String(rawType).toLowerCase().trim();
+
+      // Ensure the account exists (produce clean 404 for unknown accounts).
+      await server.loadAccount(id).catch((loadErr) => {
+        if (loadErr && loadErr.response && loadErr.response.status === 404) {
+          throw makeAccountNotFoundError(id, NETWORK);
+        }
+        throw loadErr;
+      });
+
+      let opsQuery = server
+        .operations()
+        .forAccount(id)
+        .limit(limit)
+        .order(order);
+      if (cursor) opsQuery = opsQuery.cursor(cursor);
+
+      const opsResponse = await opsQuery.call();
+      const opRecords = opsResponse.records || [];
+
+      // Keep only operations of the requested type, deduplicated by tx hash
+      const seen = new Set();
+      const matchingOps = opRecords.filter((op) => {
+        if (op.type !== normalizedType) return false;
+        if (seen.has(op.transaction_hash)) return false;
+        seen.add(op.transaction_hash);
+        return true;
+      });
+
+      // Resolve full transaction detail for each matched operation
+      const transactions = (
+        await Promise.all(
+          matchingOps.map(async (op) => {
+            try {
+              const tx = await server
+                .transactions()
+                .transaction(op.transaction_hash)
+                .call();
+              return formatTx(tx);
+            } catch (_) {
+              return null; // skip on individual lookup failure
+            }
+          })
+        )
+      ).filter(Boolean);
+
+      const lastOp = opRecords[opRecords.length - 1];
+      const nextCursor = lastOp ? lastOp.paging_token : null;
+
+      return success(res, {
+        items: transactions,
+        total: transactions.length,
+        limit,
+        cursor: opRecords.length > 0 ? nextCursor : null,
+        filter: { type: normalizedType },
+      });
+    }
+
+    // No ?type= filter — standard paginated transaction history
+    let txQuery = server
+      .transactions()
+      .forAccount(id)
+      .limit(limit)
+      .order(order)
+      .includeFailed(false);
+    if (cursor) txQuery = txQuery.cursor(cursor);
+
+    const txResponse = await txQuery.call();
+    const records = txResponse.records || [];
+
+    return success(res, {
+      items: records.map(formatTx),
+      total: records.length,
+      limit,
+      cursor: records.length > 0 ? records[records.length - 1].paging_token : null,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
 
 module.exports = router;
