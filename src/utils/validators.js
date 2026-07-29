@@ -249,6 +249,39 @@ function validateCursor(cursor) {
   return cursor;
 }
 
+/**
+ * Validate and parse an ISO 8601 date string supplied as a query parameter.
+ *
+ * Accepts any string that JavaScript's Date constructor recognises as a valid
+ * date (e.g. "2024-01-15", "2024-01-15T12:00:00Z"). Empty strings and values
+ * that produce an invalid Date are rejected with a structured 400 error.
+ *
+ * @param {string} value - Raw query-parameter value to validate.
+ * @param {string} field - Parameter name used in error messages (e.g. "startDate").
+ * @returns {Date} A valid Date object.
+ * @throws {Error} A validation error (isValidation = true, status = 400) when invalid.
+ */
+function validateISODate(value, field) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw makeValidationError(
+      `Query param '${field}' must be a valid ISO 8601 date string (e.g. "2024-01-15" or "2024-01-15T12:00:00Z").`,
+      field,
+      value,
+      "ISO 8601 date string"
+    );
+  }
+  const date = new Date(value);
+  if (isNaN(date.getTime())) {
+    throw makeValidationError(
+      `Query param '${field}' is not a valid date: "${String(value).slice(0, 50)}".`,
+      field,
+      value,
+      "ISO 8601 date string"
+    );
+  }
+  return date;
+}
+
 module.exports = {
   validateAccountId,
   validateContractId,
@@ -257,4 +290,5 @@ module.exports = {
   validateOrder,
   validateAsset,
   validateCursor,
+  validateISODate,
 };
