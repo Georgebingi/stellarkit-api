@@ -502,10 +502,13 @@ router.get("/:id/multisig-info", async (req, res, next) => {
 
     const account = await server.loadAccount(id);
 
+    // Normalise every signer: camelCase fields, human-readable type,
+    // and sponsoredBy always present (string or null — never omitted).
     const signers = (account.signers || []).map((s) => ({
       key: s.key,
       weight: Number(s.weight) || 0,
       type: normalizeSignerType(s.type),
+      sponsoredBy: s.sponsor || s.sponsored_by || null,
     }));
 
     const thresholds = {
@@ -521,11 +524,13 @@ router.get("/:id/multisig-info", async (req, res, next) => {
     // The account is "multisig" when it requires more than one party to sign,
     // which is true if there is more than one registered signer OR any
     // threshold exceeds the weight of the master key alone.
-    const isMultisig =
+    // Cast to boolean explicitly so the field is always true/false, never truthy.
+    const isMultisig = Boolean(
       signers.length > 1 ||
       thresholds.low > masterWeight ||
       thresholds.med > masterWeight ||
-      thresholds.high > masterWeight;
+      thresholds.high > masterWeight,
+    );
 
     return success(res, {
       accountId: account.id,
