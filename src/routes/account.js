@@ -5,6 +5,7 @@ const { success, toISOTimestamp } = require("../utils/response");
 const {
   makeAccountNotFoundError,
   makeClaimableBalanceNotFoundError,
+  makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
@@ -1819,11 +1820,7 @@ router.get(
           );
 
       if (!trustline) {
-        const notFoundErr = new Error(
-          `Account does not hold asset ${normalizedAssetCode}:${assetIssuer}.`,
-        );
-        notFoundErr.status = 404;
-        throw notFoundErr;
+        return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
       }
 
       const isAuthorized = trustline.is_authorized !== false;
@@ -2045,17 +2042,7 @@ router.get(
       );
 
       if (!trustline) {
-        return success(res, {
-          accountId: account.id,
-          asset: normalizeAsset(normalizedAssetCode, assetIssuer, undefined),
-          canReceive: false,
-          reasons: ["No trustline exists for this asset."],
-          trustlineExists: false,
-          isAuthorized: false,
-          availableCapacity: 0,
-          currentBalance: 0,
-          limit: 0,
-        });
+        return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
       }
 
       const isAuthorized = trustline.is_authorized === true;

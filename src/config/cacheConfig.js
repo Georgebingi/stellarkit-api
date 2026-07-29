@@ -109,10 +109,10 @@ const cacheTTL = {
     20000
   ),
 
-  /** /soroban/contract/:id/storage — instance storage changes only on contract invocation */
-  contractStorage: msToSeconds(
-    process.env.CACHE_TTL_CONTRACT_STORAGE_MS,
-    15000
+  /** /network/fee-percentiles */
+  feePercentiles: msToSeconds(
+    process.env.CACHE_TTL_FEE_PERCENTILES_MS,
+    globalFallbackMs
   ),
 
   /** /account/:id/asset-balance/:code/:issuer — single trustline balance lookup */
