@@ -7,6 +7,7 @@ const { server } = require("../config/stellar");
 const { success } = require("../utils/response");
 const { validateAssetCode, validateAccountId, validateAsset, validateLimit } = require("../utils/validators");
 const { parseStellarAsset } = require("../utils/asset");
+const { isNativeAsset } = require("../utils/assetHelpers");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
 
@@ -554,8 +555,8 @@ function formatAsset(type, code, issuer) {
  * Alphabetical ordering ensures XLM/USDC and USDC/XLM map to the same key.
  */
 function pairKey(baseType, baseCode, baseIssuer, counterType, counterCode, counterIssuer) {
-  const a = baseType === "native" ? "XLM:native" : `${baseCode}:${baseIssuer}`;
-  const b = counterType === "native" ? "XLM:native" : `${counterCode}:${counterIssuer}`;
+  const a = isNativeAsset({ type: baseType }) ? "XLM:native" : `${baseCode}:${baseIssuer}`;
+  const b = isNativeAsset({ type: counterType }) ? "XLM:native" : `${counterCode}:${counterIssuer}`;
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
@@ -679,12 +680,12 @@ router.get("/top-markets", async (req, res, next) => {
         let spread = null;
         try {
           const selling =
-            market.baseAsset.type === "native"
+            isNativeAsset(market.baseAsset)
               ? Asset.native()
               : new Asset(market.baseAsset.code, market.baseAsset.issuer);
 
           const buying =
-            market.counterAsset.type === "native"
+            isNativeAsset(market.counterAsset)
               ? Asset.native()
               : new Asset(market.counterAsset.code, market.counterAsset.issuer);
 

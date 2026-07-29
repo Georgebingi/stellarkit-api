@@ -115,16 +115,22 @@ const cacheTTL = {
     15000
   ),
 
-  /** /stellar-toml/:domain — TOML files change very infrequently; 5-minute default */
-  toml: msToSeconds(
-    process.env.CACHE_TTL_TOML_MS,
-    300000
+  /** /account/:id/asset-balance/:code/:issuer — single trustline balance lookup */
+  assetBalance: msToSeconds(
+    process.env.CACHE_TTL_ASSET_BALANCE_MS,
+    10000
   ),
 
-  /** /account/:id/signing-keys */
-  signingKeys: msToSeconds(
-    process.env.CACHE_TTL_SIGNING_KEYS_MS,
-    20000
+  /** /account/:id/trades — trade history per account */
+  trades: msToSeconds(
+    process.env.CACHE_TTL_TRADES_MS,
+    globalFallbackMs
+  ),
+
+  /** /liquidity-pools/:id/trades — pool trade history */
+  poolTrades: msToSeconds(
+    process.env.CACHE_TTL_POOL_TRADES_MS,
+    globalFallbackMs
   ),
 };
 

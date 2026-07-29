@@ -21,6 +21,7 @@ const { validateEffectType } = require("../utils/effectTypes");
 const axios = require("axios");
 const { Asset } = require("@stellar/stellar-sdk");
 const { normalizeAsset, normalizeAssetFromString } = require("../utils/asset");
+const { isNativeAsset, isNonNativeAsset } = require("../utils/assetHelpers");
 const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
 
@@ -128,11 +129,9 @@ function handleAccountNotFound(err, next, accountId) {
 }
 
 function formatAccountBalances(account) {
-  const xlmBalance = (account.balances || []).find(
-    (b) => b.asset_type === "native",
-  );
+  const xlmBalance = (account.balances || []).find((b) => isNativeAsset(b));
   const assets = (account.balances || [])
-    .filter((b) => b.asset_type !== "native")
+    .filter((b) => isNonNativeAsset(b))
     .map((b) => ({
       asset: normalizeAsset(b.asset_code, b.asset_issuer, b.asset_type),
       balance: b.balance,
@@ -168,7 +167,7 @@ function toSevenDecimalString(value) {
 function normalizeAssetShape(asset) {
   if (!asset) return { code: null, issuer: null, type: "credit_alphanum4" };
 
-  if (asset === "native" || asset.asset_type === "native" || asset.type === "native") {
+  if (asset === "native" || isNativeAsset(asset)) {
     return { code: "XLM", issuer: null, type: "native" };
   }
 
@@ -273,7 +272,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
     const tomlCache = new Map();
 
     const trustlineBalances = (account.balances || []).filter(
-      (b) => b.asset_type !== "native",
+      (b) => isNonNativeAsset(b),
     );
 
     let trustlines = await Promise.all(
@@ -375,7 +374,7 @@ router.get("/:id/native-balance", async (req, res, next) => {
 
     const account = await server.loadAccount(id);
     const xlmBalance = (account.balances || []).find(
-      (b) => b.asset_type === "native",
+      (b) => isNativeAsset(b),
     );
 
     if (!xlmBalance) {
@@ -398,14 +397,21 @@ router.get("/:id/native-balance", async (req, res, next) => {
 
 /**
  * GET /account/:id/asset-balance/:assetCode/:assetIssuer
- * 
+ *
  * Returns the balance for a specific asset trustline without fetching all balances.
- * 
+ *
  * Path params:
  *   - id (string, required) — Stellar account public key (G...)
  *   - assetCode (string, required) — Asset code (e.g., USDC)
  *   - assetIssuer (string, required) — Issuer public key (G...)
- * 
+ *
+ * Query params:
+ *   - fresh (boolean, default: false) — bypasses the cache when set to "true"
+ *
+ * Response headers:
+ *   - X-Cache: HIT  — served from cache
+ *   - X-Cache: MISS — fetched live from Horizon and cached
+ *
  * Returns:
  *   - 200: { success: true, data: { asset, balance, limit, buyingLiabilities, sellingLiabilities, isAuthorized } }
  *   - 404: Asset trustline not found on the account
@@ -417,24 +423,35 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     validateAccountId(assetIssuer);
     validateAssetCode(assetCode);
 
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
+    const cacheKey = `asset-balance:${id}:${assetCode.toUpperCase()}:${assetIssuer}`;
+
+    if (!fresh) {
+      const cached = cacheService.get(cacheKey);
+      if (cached) {
+        res.set("X-Cache", "HIT");
+        return success(res, cached);
+      }
+    }
+
     const account = await server.loadAccount(id);
     const trustline = (account.balances || []).find(
-      (b) => 
-        b.asset_type !== "native" &&
+      (b) =>
+        isNonNativeAsset(b) &&
         b.asset_code === assetCode &&
         b.asset_issuer === assetIssuer
     );
 
     if (!trustline) {
       const err = new Error(`Account ${id} does not hold asset ${assetCode}:${assetIssuer}`);
+      err.isAssetNotFound = true;
       err.status = 404;
-      err.type = "AssetNotFound";
       return next(err);
     }
 
     const assetType = assetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
 
-    return success(res, {
+    const data = {
       asset: {
         code: assetCode,
         issuer: assetIssuer,
@@ -445,7 +462,11 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
       buyingLiabilities: trustline.buying_liabilities,
       sellingLiabilities: trustline.selling_liabilities,
       isAuthorized: trustline.is_authorized,
-    });
+    };
+
+    cacheService.set(cacheKey, data, cacheTTL.assetBalance);
+    res.set("X-Cache", "MISS");
+    return success(res, data);
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
   }
@@ -607,7 +628,7 @@ router.get("/:id/effects", async (req, res, next) => {
 
       // Type specific fields (best-effort normalization)
       const asset = (() => {
-        if (eff.asset_type === "native")
+        if (isNativeAsset(eff))
           return { code: "XLM", issuer: null, type: "native" };
         if (eff.asset_type)
           return {
@@ -722,7 +743,7 @@ router.get("/:id/payments", async (req, res, next) => {
           type: assetType,
         };
 
-        if (assetType !== "native" && assetIssuer) {
+        if (!isNativeAsset({ type: assetType }) && assetIssuer) {
           if (!issuerCache.has(assetIssuer)) {
             issuerCache.set(
               assetIssuer,
@@ -1495,7 +1516,7 @@ router.get("/:id/risk-score", async (req, res, next) => {
 
     // Factor 4: Number of trustlines
     const trustlineCount = (account.balances || []).filter(
-      (b) => b.asset_type !== "native",
+      (b) => isNonNativeAsset(b),
     ).length;
     if (trustlineCount > 30) {
       score -= 15;
@@ -1606,7 +1627,7 @@ router.get("/:id/subentry-health", async (req, res, next) => {
     else if (usagePercentRaw > 80) warning = "approaching_limit";
 
     const trustlines = (account.balances || []).filter(
-      (b) => b.asset_type !== "native",
+      (b) => isNonNativeAsset(b),
     ).length;
     const dataEntries = Object.keys(account.data_attr || {}).length;
     const additionalSigners = Math.max(0, (account.signers || []).length - 1);
@@ -1789,10 +1810,10 @@ router.get(
 
       const trustline =
         normalizedAssetCode === "XLM"
-          ? (account.balances || []).find((b) => b.asset_type === "native")
+          ? (account.balances || []).find((b) => isNativeAsset(b))
           : (account.balances || []).find(
             (b) =>
-              b.asset_type !== "native" &&
+              isNonNativeAsset(b) &&
               b.asset_code === normalizedAssetCode &&
               b.asset_issuer === assetIssuer,
           );
@@ -2009,7 +2030,7 @@ router.get(
           isAuthorized: true,
           availableCapacity: null,
           currentBalance: parseFloat(
-            (account.balances || []).find((b) => b.asset_type === "native")
+            (account.balances || []).find((b) => isNativeAsset(b))
               ?.balance || "0",
           ),
           limit: null,
@@ -2018,7 +2039,7 @@ router.get(
 
       const trustline = (account.balances || []).find(
         (b) =>
-          b.asset_type !== "native" &&
+          isNonNativeAsset(b) &&
           b.asset_code === normalizedAssetCode &&
           b.asset_issuer === assetIssuer,
       );
@@ -2965,7 +2986,7 @@ router.get("/:id/sponsorships", async (req, res, next) => {
         sponsoredBy.push({
           type: "trustline",
           address:
-            b.asset_type === "native"
+            isNativeAsset(b)
               ? "XLM"
               : `${b.asset_code}:${b.asset_issuer}`,
           sponsor: b.sponsor,
@@ -3241,7 +3262,7 @@ router.get("/:id/timeline", async (req, res, next) => {
 
         case "payment":
           const isSent = op.from === id;
-          const assetCode = op.asset_type === "native" ? "XLM" : op.asset_code;
+          const assetCode = isNativeAsset(op) ? "XLM" : op.asset_code;
           return {
             ...base,
             type: isSent ? "payment_sent" : "payment_received",
@@ -3257,9 +3278,9 @@ router.get("/:id/timeline", async (req, res, next) => {
         case "path_payment_strict_send":
           const isPathSent = op.from === id;
           const sentAsset =
-            op.source_asset_type === "native" ? "XLM" : op.source_asset_code;
+            isNativeAsset({ asset_type: op.source_asset_type }) ? "XLM" : op.source_asset_code;
           const receivedAsset =
-            op.asset_type === "native" ? "XLM" : op.asset_code;
+            isNativeAsset(op) ? "XLM" : op.asset_code;
 
           if (isPathSent) {
             return {
@@ -3302,9 +3323,9 @@ router.get("/:id/timeline", async (req, res, next) => {
             parseFloat(op.amount) === 0 &&
             op.offer_id !== "0";
           const sellAsset =
-            op.selling_asset_type === "native" ? "XLM" : op.selling_asset_code;
+            isNativeAsset({ asset_type: op.selling_asset_type }) ? "XLM" : op.selling_asset_code;
           const buyAsset =
-            op.buying_asset_type === "native" ? "XLM" : op.buying_asset_code;
+            isNativeAsset({ asset_type: op.buying_asset_type }) ? "XLM" : op.buying_asset_code;
 
           if (isRemove) {
             return {
@@ -3388,7 +3409,7 @@ router.get("/:id/trustline-health", async (req, res, next) => {
 
     // Filter out native XLM and extract trustline health data
     const trustlines = account.balances
-      .filter((b) => b.asset_type !== "native")
+      .filter((b) => isNonNativeAsset(b))
       .map((trustline) => {
         const balance = parseFloat(trustline.balance || "0");
         const limit = parseFloat(trustline.limit || "0");
