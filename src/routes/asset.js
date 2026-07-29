@@ -16,6 +16,14 @@ const { normalizeAsset } = require("../utils/asset");
 router.use(normalizeAssetCode);
 
 const DEFAULT_ASSET_HOLDERS_CACHE_TTL_MS = 30000;
+
+function toSevenDecimalString(value) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return "0.0000000";
+  const truncated = Math.floor(parsed * 1e7) / 1e7;
+  return truncated.toFixed(7);
+}
+
 const BASE_RESERVE = 0.5;
 
 function isFreshRequest(query) {
@@ -130,6 +138,18 @@ router.get(
       const verified = req.query.verified;
       const isVerifiedFilter = verified === "true";
 
+      if (verified !== undefined && verified !== "true" && verified !== "false") {
+        const err = new Error(
+          "Query parameter 'verified': must be 'true' or 'false'.",
+        );
+        err.isValidation = true;
+        err.status = 400;
+        err.field = "verified";
+        err.receivedValue = String(verified);
+        err.expectedFormat = "'true' or 'false'";
+        throw err;
+      }
+
       if (minBalance !== null && maxBalance !== null && minBalance > maxBalance) {
         const err = new Error(
           "Query parameter 'minBalance' must not be greater than 'maxBalance'.",
@@ -141,10 +161,10 @@ router.get(
         throw err;
       }
 
-      const hasBalanceFilter = minBalance !== null || maxBalance !== null || isVerifiedFilter;
+      const skipCache = minBalance !== null || maxBalance !== null || isVerifiedFilter;
       const cacheKey = `asset-holders:${assetCode}:${issuer}:${limit}:${order}:${cursor || ""}`;
 
-      if (!fresh && !hasBalanceFilter) {
+      if (!fresh && !skipCache) {
         const cached = cacheService.get(cacheKey);
         if (cached) {
           res.set("X-Cache", "HIT");
@@ -188,7 +208,7 @@ router.get(
         hasMore: filteredHolders.length === limit,
       };
 
-      if (!hasBalanceFilter) {
+      if (!skipCache) {
         cacheService.set(cacheKey, { holders: filteredHolders, meta }, getAssetHoldersCacheTtlSeconds());
       }
 
