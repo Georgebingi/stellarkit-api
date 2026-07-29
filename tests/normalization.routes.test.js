@@ -53,6 +53,122 @@ describe("response normalization endpoints", () => {
     expect(res.body.data.holders[0]).not.toHaveProperty("paging_token");
   });
 
+  it("filters holders with ?verified=true returning only accounts above base reserve", async () => {
+    server.accounts.mockReturnValue({
+      forAsset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      cursor: jest.fn().mockReturnThis(),
+      call: jest.fn().mockResolvedValue({
+        records: [
+          {
+            id: "GAHIGH",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "100.0000000", asset_type: "credit_alphanum4" },
+              { balance: "10.0000000", asset_type: "native" },
+            ],
+            paging_token: "tok1",
+          },
+          {
+            id: "GALOW",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "50.0000000", asset_type: "credit_alphanum4" },
+              { balance: "0.1000000", asset_type: "native" },
+            ],
+            paging_token: "tok2",
+          },
+          {
+            id: "GAZERO",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "25.0000000", asset_type: "credit_alphanum4" },
+            ],
+            paging_token: "tok3",
+          },
+        ],
+      }),
+    });
+
+    const res = await request(app)
+      .get("/asset/USDC/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7/holders?verified=true")
+      .expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].address).toBe("GAHIGH");
+  });
+
+  it("returns all holders when ?verified=false is passed", async () => {
+    server.accounts.mockReturnValue({
+      forAsset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      cursor: jest.fn().mockReturnThis(),
+      call: jest.fn().mockResolvedValue({
+        records: [
+          {
+            id: "GAHIGH",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "100.0000000", asset_type: "credit_alphanum4" },
+              { balance: "10.0000000", asset_type: "native" },
+            ],
+            paging_token: "tok1",
+          },
+          {
+            id: "GALOW",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "50.0000000", asset_type: "credit_alphanum4" },
+              { balance: "0.1000000", asset_type: "native" },
+            ],
+            paging_token: "tok2",
+          },
+        ],
+      }),
+    });
+
+    const res = await request(app)
+      .get("/asset/USDC/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7/holders?verified=false")
+      .expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveLength(2);
+  });
+
+  it("returns all holders when verified param is omitted", async () => {
+    server.accounts.mockReturnValue({
+      forAsset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      cursor: jest.fn().mockReturnThis(),
+      call: jest.fn().mockResolvedValue({
+        records: [
+          {
+            id: "GAHIGH",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "100.0000000", asset_type: "credit_alphanum4" },
+              { balance: "10.0000000", asset_type: "native" },
+            ],
+            paging_token: "tok1",
+          },
+          {
+            id: "GALOW",
+            balances: [
+              { asset_code: "USDC", asset_issuer: "GISSUER", balance: "50.0000000", asset_type: "credit_alphanum4" },
+              { balance: "0.1000000", asset_type: "native" },
+            ],
+            paging_token: "tok2",
+          },
+        ],
+      }),
+    });
+
+    const res = await request(app)
+      .get("/asset/USDC/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7/holders")
+      .expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveLength(2);
+  });
+
   it("normalizes pool positions asset fields and decimal strings", async () => {
     server.loadAccount.mockResolvedValue({
       balances: [
