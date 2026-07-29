@@ -3,7 +3,6 @@ const express = require("express");
 const helmet = require("helmet");
 const hpp = require("hpp");
 const cors = require("cors");
-const morgan = require("morgan");
 const compression = require("compression");
 
 const logger = require("./utils/logger");
@@ -18,6 +17,7 @@ const contentTypeValidator = require("./middleware/contentTypeValidator");
 const bodySizeLimit = require("./middleware/bodySizeLimit");
 const errorHandler = require("./middleware/errorHandler");
 const requestIdMiddleware = require("./middleware/requestId");
+const requestLogger = require("./middleware/requestLogger");
 const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
@@ -168,24 +168,10 @@ app.use(helmet());
 app.use(compression({ threshold: 1024 }));
 app.use(cors());
 app.use(requestIdMiddleware);
+app.use(requestLogger);
 app.use(contentTypeValidator);
 app.use(bodySizeLimit);
 app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
-app.use(
-  morgan(function (tokens, req, res) {
-    const requestId = req.requestId || "-";
-    return [
-      `[${requestId}]`,
-      tokens.method(req, res),
-      tokens.url(req, res),
-      tokens.status(req, res),
-      tokens.res(req, res, "content-length"),
-      "-",
-      tokens["response-time"](req, res),
-      "ms",
-    ].join(" ");
-  }),
-);
 
 // ── Rate Limiting ───────────────────────────────────────────────────────────
 app.use(rateLimiter);
