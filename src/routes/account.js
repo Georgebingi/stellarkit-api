@@ -5,15 +5,15 @@ const { success, toISOTimestamp } = require("../utils/response");
 const {
   makeAccountNotFoundError,
   makeClaimableBalanceNotFoundError,
+  makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
-const { validateAccountId, validateAssetCode } = require("../utils/validators");
+const { validateAccountId, validateAssetCode, validateLimit } = require("../utils/validators");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-const { validateAccountId, validateLimit } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { validateEffectType } = require("../utils/effectTypes");
 
@@ -22,7 +22,6 @@ const { Asset } = require("@stellar/stellar-sdk");
 const { normalizeAsset, normalizeAssetFromString } = require("../utils/asset");
 const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
-const { validateEffectType } = require("../utils/effectTypes");
 
 // Cache TTL for account endpoint responses (in seconds)
 const CACHE_TTL_ACCOUNT = parseInt(process.env.CACHE_TTL_ACCOUNT_MS, 10) / 1000 || 10;
@@ -390,10 +389,7 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     );
 
     if (!trustline) {
-      const err = new Error(`Account ${id} does not hold asset ${assetCode}:${assetIssuer}`);
-      err.status = 404;
-      err.type = "AssetNotFound";
-      return next(err);
+      return next(makeTrustlineNotFoundError(id, assetCode, assetIssuer));
     }
 
     const assetType = assetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
@@ -1731,11 +1727,7 @@ router.get(
           );
 
       if (!trustline) {
-        const notFoundErr = new Error(
-          `Account does not hold asset ${normalizedAssetCode}:${assetIssuer}.`,
-        );
-        notFoundErr.status = 404;
-        throw notFoundErr;
+        return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
       }
 
       const isAuthorized = trustline.is_authorized !== false;
@@ -1953,17 +1945,7 @@ router.get(
       );
 
       if (!trustline) {
-        return success(res, {
-          accountId: account.id,
-          asset: normalizeAsset(normalizedAssetCode, assetIssuer, undefined),
-          canReceive: false,
-          reasons: ["No trustline exists for this asset."],
-          trustlineExists: false,
-          isAuthorized: false,
-          availableCapacity: 0,
-          currentBalance: 0,
-          limit: 0,
-        });
+        return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
       }
 
       const isAuthorized = trustline.is_authorized === true;

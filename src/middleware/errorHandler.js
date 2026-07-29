@@ -12,6 +12,7 @@ const {
   HORIZON_TIMEOUT_SUGGESTION,
   isHorizonTimeoutError,
 } = require("../utils/errors");
+const { NETWORK } = require("../config/stellar");
 
 /**
  * Logs 4xx and 5xx responses using the structured logger.
@@ -87,6 +88,29 @@ function isTransactionSubmissionFailure(horizonError) {
     typeof horizonError.type === "string" &&
     horizonError.type.includes("transaction_failed")
   );
+}
+
+/**
+ * Returns true when err is a network-level connection failure to Horizon.
+ */
+function isConnectionError(err) {
+  if (!err) return false;
+  const code = err.code || (err.cause && err.cause.code);
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ECONNRESET") return true;
+  const msg = (err.message || "").toLowerCase();
+  return msg.includes("econnrefused") || msg.includes("enotfound");
+}
+
+/**
+ * Returns true when a Horizon 404 is for an offer endpoint
+ * (e.g. GET /offers/123 returned Not Found).
+ */
+function isOfferNotFoundError(err) {
+  if (!err || !err.response) return false;
+  const { status, config } = err.response;
+  if (status !== 404) return false;
+  const url = (config && config.url) || "";
+  return url.includes("/offers/");
 }
 
 /**
@@ -276,6 +300,20 @@ function errorHandler(err, req, res, next) {
         message: err.message,
         suggestion:
           "Verify the asset code and issuer address are correct.",
+      },
+    });
+  }
+
+  // TrustlineNotFound errors — specific asset trustline missing on an account
+  if (err.isTrustlineNotFound) {
+    logError(404, req, err.message);
+    return res.status(404).json({
+      success: false,
+      error: {
+        type: "TrustlineNotFound",
+        message: err.message,
+        suggestion:
+          "The account must establish a trustline before holding this asset.",
       },
     });
   }
