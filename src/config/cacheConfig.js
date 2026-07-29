@@ -16,6 +16,8 @@
  *   CACHE_TTL_CLAIMABLE_BALANCES_MS — /account/:id/claimable-balances (default: 20 000 ms)
  *   CACHE_TTL_EFFECTS_MS         — /account/:id/effects          (default: 30 000 ms)
  *   CACHE_TTL_SIGNING_KEYS_MS   — /account/:id/signing-keys     (default: 20 000 ms)
+ *   CACHE_TTL_FREEZE_CHECK_MS   — /account/:id/freeze-status     (default: 30 000 ms)
+ *   CACHE_TTL_BALANCES_BY_SPONSOR_MS — /claimable-balances/by-sponsor (default: 30 000 ms)
  *
  * The legacy CACHE_TTL_MS variable is still respected as a global fallback so
  * existing deployments are not broken.
@@ -111,6 +113,26 @@ const cacheTTL = {
   contractStorage: msToSeconds(
     process.env.CACHE_TTL_CONTRACT_STORAGE_MS,
     15000
+  ),
+
+  /**
+   * GET /account/:id/freeze-status/:assetCode/:assetIssuer
+   * Freeze status only changes when the issuer explicitly modifies authorization flags,
+   * so a 30-second default is safely conservative.
+   */
+  freezeCheck: msToSeconds(
+    process.env.CACHE_TTL_FREEZE_CHECK_MS,
+    30000
+  ),
+
+  /**
+   * GET /claimable-balances/by-sponsor/:address
+   * Sponsored claimable balances change infrequently (only on create/claim).
+   * Keyed by sponsor address and pagination params.
+   */
+  balancesBySponsor: msToSeconds(
+    process.env.CACHE_TTL_BALANCES_BY_SPONSOR_MS,
+    30000
   ),
 };
 
