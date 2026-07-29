@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { server, horizonUrl } = require("../config/stellar");
 const { success } = require("../utils/response");
+const StellarKitError = require("../utils/StellarKitError");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
 
@@ -14,6 +15,56 @@ const STROOP_DECIMALS = 7;
 const FEE_PERCENTILES_CACHE_TTL = 5;
 const PERCENTILE_LEVELS = [10, 20, 30, 50, 70, 90, 95, 99];
 const TX_FETCH_LIMIT = 100;
+const PROTOCOL_VERSION_CACHE_TTL = 60;
+
+/**
+ * GET /network/protocol-version
+ * Returns protocol and Horizon metadata for the configured network.
+ */
+router.get("/protocol-version", async (req, res, next) => {
+  try {
+    const cacheKey = "network-protocol-version";
+    const cached = cacheService.get(cacheKey);
+
+    if (cached !== undefined) {
+      res.set("X-Cache", "HIT");
+      return success(res, cached);
+    }
+
+    const response = await fetch(horizonUrl);
+    if (!response.ok) {
+      throw new StellarKitError(
+        "Unable to fetch network metadata from Stellar Horizon.",
+        503,
+        "HorizonUnavailable",
+        null,
+        "Verify the configured Horizon node is reachable and try again.",
+      );
+    }
+
+    const metadata = await response.json();
+    const data = {
+      protocolVersion: metadata.current_protocol_version,
+      networkPassphrase: metadata.network_passphrase,
+      horizonVersion: metadata.horizon_version,
+    };
+
+    if (Object.values(data).some((value) => value === undefined || value === null)) {
+      throw new StellarKitError(
+        "Stellar Horizon returned incomplete network metadata.",
+        502,
+        "InvalidHorizonResponse",
+      );
+    }
+
+    cacheService.set(cacheKey, data, PROTOCOL_VERSION_CACHE_TTL);
+
+    res.set("X-Cache", "MISS");
+    return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
 
 function computePercentile(sortedValues, percentile) {
   if (sortedValues.length === 0) return 0;

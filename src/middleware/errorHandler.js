@@ -106,11 +106,11 @@ function isConnectionError(err) {
  * (e.g. GET /offers/123 returned Not Found).
  */
 function isOfferNotFoundError(err) {
-  if (!err || !err.response) return false;
-  const { status, config } = err.response;
-  if (status !== 404) return false;
-  const url = (config && config.url) || "";
-  return url.includes("/offers/");
+  if (!err || !err.response || !err.response.data) return false;
+  const data = err.response.data;
+  const title = (data.title || "").toLowerCase();
+  return title.includes("offer not found") ||
+    (err.response.status === 404 && title.includes("offer"));
 }
 
 /**
@@ -131,34 +131,6 @@ function buildTransactionSubmissionFailedError(horizonError) {
     resultCodes,
     ...(resultCode ? { code: resultCode } : {}),
   };
-}
-
-/**
- * Returns true when an error indicates a network connectivity failure
- * (the Horizon node could not be reached at all).
- *
- * @param {Error} err
- * @returns {boolean}
- */
-function isConnectionError(err) {
-  if (!err) return false;
-  const code = err.code || (err.cause && err.cause.code);
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ECONNRESET") return true;
-  const msg = (err.message || "").toLowerCase();
-  return msg.includes("econnrefused") || msg.includes("enotfound");
-}
-
-/**
- * Returns true when a Horizon error response indicates an offer was not found.
- *
- * @param {Error} err
- * @returns {boolean}
- */
-function isOfferNotFoundError(err) {
-  if (!err || !err.response || !err.response.data) return false;
-  const data = err.response.data;
-  const title = (data.title || "").toLowerCase();
-  return title.includes("offer not found") || (err.response.status === 404 && title.includes("offer"));
 }
 
 function errorHandler(err, req, res, next) {
