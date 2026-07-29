@@ -9,6 +9,32 @@ function isFreshRequest(query) {
   return query.fresh === true || query.fresh === "true";
 }
 
+const STROOPS_PER_XLM = 10_000_000;
+const STROOP_DECIMALS = 7;
+const FEE_PERCENTILES_CACHE_TTL = 5;
+const PERCENTILE_LEVELS = [10, 20, 30, 50, 70, 90, 95, 99];
+const TX_FETCH_LIMIT = 100;
+
+function computePercentile(sortedValues, percentile) {
+  if (sortedValues.length === 0) return 0;
+  if (sortedValues.length === 1) return sortedValues[0];
+  const index = (percentile / 100) * (sortedValues.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sortedValues[lower];
+  const weight = index - lower;
+  return Math.round(
+    sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight,
+  );
+}
+
+function buildFeeObject(stroops) {
+  return {
+    stroops,
+    xlm: (stroops / STROOPS_PER_XLM).toFixed(STROOP_DECIMALS),
+  };
+}
+
 
 /**
  * GET /network/validators
@@ -136,7 +162,15 @@ router.get("/base-fee", async (req, res, next) => {
 
 /**
  * GET /network/fee-percentiles
- * Returns fee distribution percentiles from recent network activity.
+ * Returns fee distribution percentiles at multiple levels, the current
+ * ledger's accepted fee range, and the latest ledger sequence.
+ *
+ * Query params:
+ *   - fresh (boolean, default: false) — bypasses cache when set to "true"
+ *
+ * @example
+ * GET /network/fee-percentiles
+ * GET /network/fee-percentiles?fresh=true
  */
 router.get("/fee-percentiles", async (req, res, next) => {
   try {
@@ -152,18 +186,46 @@ router.get("/fee-percentiles", async (req, res, next) => {
     }
 
     const feeStats = await server.feeStats();
+    const ledgerResponse = await server.ledgers().order("desc").limit(1).call();
+    const latestLedger = (ledgerResponse.records || [])[0] || {};
+
+    const feeCharged = feeStats.fee_charged || {};
+    const feeAccepted = feeStats.fee_accepted || feeCharged;
+
+    const minFeeStroops = parseInt(feeAccepted.min || feeCharged.min, 10);
+    const maxFeeStroops = parseInt(feeAccepted.max || feeCharged.max, 10);
+
+    const txResponse = await server
+      .transactions()
+      .order("desc")
+      .limit(TX_FETCH_LIMIT)
+      .call();
+    const txRecords = txResponse.records || [];
+    const fees = txRecords
+      .map((tx) => parseInt(tx.max_fee, 10))
+      .filter((f) => f > 0);
+    fees.sort((a, b) => a - b);
+
+    const percentiles = {};
+    for (const p of PERCENTILE_LEVELS) {
+      const sourceValue = feeCharged[`p${p}`];
+      if (sourceValue !== undefined && sourceValue !== null) {
+        percentiles[`p${p}`] = buildFeeObject(parseInt(sourceValue, 10));
+      } else {
+        percentiles[`p${p}`] = buildFeeObject(computePercentile(fees, p));
+      }
+    }
 
     const data = {
-      p10: parseInt(feeStats.fee_charged.p10 || feeStats.fee_charged.min, 10),
-      p50: parseInt(feeStats.fee_charged.p50 || feeStats.fee_charged.mode, 10),
-      p90: parseInt(feeStats.fee_charged.p90 || feeStats.fee_charged.p95, 10),
-      p95: parseInt(feeStats.fee_charged.p95, 10),
-      p99: parseInt(feeStats.fee_charged.p99 || feeStats.fee_charged.max, 10),
-      lastLedgerBaseFee: parseInt(feeStats.last_ledger_base_fee, 10),
-      ledgerCapacityUsage: parseFloat(feeStats.ledger_capacity_usage),
+      percentiles,
+      minFee: buildFeeObject(minFeeStroops),
+      maxFee: buildFeeObject(maxFeeStroops),
+      ledgerSequence: latestLedger.sequence
+        ? parseInt(latestLedger.sequence, 10)
+        : null,
     };
 
-    cacheService.set(cacheKey, data, BASE_FEE_CACHE_TTL);
+    cacheService.set(cacheKey, data, FEE_PERCENTILES_CACHE_TTL);
 
     res.set("X-Cache", "MISS");
     return success(res, data);

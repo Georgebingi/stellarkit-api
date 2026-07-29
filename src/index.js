@@ -527,6 +527,11 @@ app.get("/", (req, res) => {
         },
         {
           method: "GET",
+          path: "/network/fee-percentiles",
+          description: "Fee percentile distribution (p10–p99) with accepted fee range and ledger sequence",
+        },
+        {
+          method: "GET",
           path: "/network/ledger-timing",
           description: "Analyze network ledger close time consistency",
         },
