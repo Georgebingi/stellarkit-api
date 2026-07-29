@@ -115,24 +115,16 @@ const cacheTTL = {
     15000
   ),
 
-  /**
-   * GET /account/:id/freeze-status/:assetCode/:assetIssuer
-   * Freeze status only changes when the issuer explicitly modifies authorization flags,
-   * so a 30-second default is safely conservative.
-   */
-  freezeCheck: msToSeconds(
-    process.env.CACHE_TTL_FREEZE_CHECK_MS,
-    30000
+  /** /stellar-toml/:domain — TOML files change very infrequently; 5-minute default */
+  toml: msToSeconds(
+    process.env.CACHE_TTL_TOML_MS,
+    300000
   ),
 
-  /**
-   * GET /claimable-balances/by-sponsor/:address
-   * Sponsored claimable balances change infrequently (only on create/claim).
-   * Keyed by sponsor address and pagination params.
-   */
-  balancesBySponsor: msToSeconds(
-    process.env.CACHE_TTL_BALANCES_BY_SPONSOR_MS,
-    30000
+  /** /account/:id/signing-keys */
+  signingKeys: msToSeconds(
+    process.env.CACHE_TTL_SIGNING_KEYS_MS,
+    20000
   ),
 };
 
