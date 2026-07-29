@@ -196,6 +196,42 @@ This endpoint provides a snapshot of the current Stellar network state. It queri
 
 This is valuable for client applications that need to know whether the network is healthy and what fee levels they should use.
 
+<details>
+<summary>curl example and sample response</summary>
+
+```bash
+curl -s http://localhost:3000/network-status | jq
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "network": "testnet",
+    "horizonUrl": "https://horizon-testnet.stellar.org",
+    "latestLedger": {
+      "sequence": 1284901,
+      "closedAt": "2024-07-01T12:00:05.000Z",
+      "transactionCount": 4,
+      "operationCount": 6,
+      "totalCoins": "105443902087.3472865",
+      "feePool": "2908768.1714875"
+    },
+    "fees": {
+      "baseFeeInStroops": 100,
+      "baseFeeInXLM": "0.0000100",
+      "basereserveInStroops": 5000000,
+      "baseReserveInXLM": "0.5000000"
+    },
+    "protocol": {
+      "version": 21
+    }
+  }
+}
+```
+
+</details>
+
 #### `GET /fee-estimate`
 
 Stellar transaction fees depend on the number of operations and the current network base fee. This endpoint computes fee estimates for a requested number of operations and provides values for different priority tiers.
@@ -650,6 +686,135 @@ The route uses Horizon's root endpoint or `ledgers` endpoints to read:
 - current protocol version
 
 It converts the base fee into both `stroops` and `XLM` for developer convenience.
+
+<details>
+<summary>curl example and sample response</summary>
+
+```bash
+curl -s http://localhost:3000/network-status | jq
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "network": "testnet",
+    "horizonUrl": "https://horizon-testnet.stellar.org",
+    "latestLedger": {
+      "sequence": 1284901,
+      "closedAt": "2024-07-01T12:00:05.000Z",
+      "transactionCount": 4,
+      "operationCount": 6
+    },
+    "fees": {
+      "baseFeeInStroops": 100,
+      "baseFeeInXLM": "0.0000100"
+    },
+    "protocol": {
+      "version": 21
+    }
+  }
+}
+```
+
+</details>
+
+### `GET /network/base-fee`
+
+Returns the current network base fee in both stroops and XLM, the latest ledger sequence, and a boolean `isSurge` flag that signals whether the network is currently experiencing elevated fees.
+
+This endpoint is useful for wallets and transaction builders that need a quick, authoritative answer to "what is the minimum fee right now?"
+
+<details>
+<summary>curl example and sample response</summary>
+
+```bash
+curl -s http://localhost:3000/network/base-fee | jq
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "baseFeeStroops": 100,
+    "baseFeeXLM": "0.0000100",
+    "isSurge": false,
+    "ledgerSequence": 1284901,
+    "ledgerClosedAt": "2024-07-01T12:00:05Z",
+    "note": "Base fee is reported in stroops and normalized XLM units."
+  }
+}
+```
+
+</details>
+
+### `GET /network/validators`
+
+Returns the current validator list from Horizon, normalized and grouped by home domain (organisation). Each entry includes the public key, home domain, current status, and last-modified ledger.
+
+This endpoint is useful for tools that monitor the health and diversity of the Stellar validator network.
+
+<details>
+<summary>curl example and sample response</summary>
+
+```bash
+curl -s http://localhost:3000/network/validators | jq
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "validators": [
+      {
+        "publicKey": "GCVJDBALC2RQFLD2HYGZDFEAQNKXHXABHI6BPNQKVKN5ACF2QHWXOQO",
+        "homeDomain": "stellar.org",
+        "isOrganization": true,
+        "history": {
+          "lastModifiedLedger": 1284800,
+          "subentryCount": 2
+        },
+        "currentStatus": "active"
+      }
+    ],
+    "total": 1,
+    "byOrganisation": {
+      "stellar.org": [ "..." ]
+    },
+    "ungrouped": []
+  }
+}
+```
+
+</details>
+
+### `GET /network/ledger-timing`
+
+Analyzes the close-time intervals across the last 10 ledgers and returns statistical summary fields: average close time, minimum, maximum, standard deviation, and a `consistency` label (`stable`, `variable`, or `unstable`).
+
+This is useful for monitoring tools and dashboards that need to surface network health degradation in real time.
+
+<details>
+<summary>curl example and sample response</summary>
+
+```bash
+curl -s http://localhost:3000/network/ledger-timing | jq
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "avgCloseTimeSeconds": 5.1111,
+    "minCloseTime": 4.0,
+    "maxCloseTime": 7.0,
+    "stdDeviation": 0.8165,
+    "consistency": "stable"
+  }
+}
+```
+
+</details>
 
 ### `GET /fee-estimate`
 

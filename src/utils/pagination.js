@@ -1,4 +1,4 @@
-const { validateLimit, validateOrder } = require("./validators");
+const { validateLimit, validateOrder, validateCursor } = require("./validators");
 
 /**
  * Parse and validate pagination query parameters.
@@ -17,6 +17,7 @@ const { validateLimit, validateOrder } = require("./validators");
  *   }
  *
  * @throws {Error} If limit or order values are invalid (validation errors have isValidation flag set)
+ * @throws {Error} If cursor is provided but is not a valid non-empty string (isInvalidCursor flag set)
  *
  * @example
  * router.get("/items", (req, res) => {
@@ -32,7 +33,11 @@ function parsePaginationParams(query = {}, maxLimit = 100) {
   const order = validateOrder(query.order);
 
   // Extract cursor (optional, can be undefined)
-  const cursor = query.cursor || undefined;
+  // When present, validate it is a non-empty string before forwarding to Horizon.
+  let cursor;
+  if (query.cursor !== undefined) {
+    cursor = validateCursor(query.cursor);
+  }
 
   return { limit, order, cursor };
 }
