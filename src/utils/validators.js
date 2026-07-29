@@ -214,6 +214,41 @@ function validateAsset(code, issuer) {
   }
 }
 
+/**
+ * Validate a pagination cursor value.
+ *
+ * A valid cursor is a non-empty string (as returned by Horizon's paging_token
+ * field).  Passing null, undefined, an empty string, or a non-string value
+ * throws a structured error that the central error handler maps to a 400
+ * response with the standardised InvalidCursor shape.
+ *
+ * Callers that receive `undefined` from `req.query.cursor` should skip this
+ * call entirely — the function is only needed when the caller explicitly
+ * intends to forward a cursor to Horizon.
+ *
+ * @param {*} cursor - The cursor value supplied by the API client.
+ * @returns {string} The validated cursor string (same value, type-confirmed).
+ * @throws {Error} Throws an error with `isInvalidCursor = true` when invalid.
+ *
+ * @example
+ * // In a paginated route:
+ * if (req.query.cursor !== undefined) {
+ *   validateCursor(req.query.cursor);
+ * }
+ */
+function validateCursor(cursor) {
+  if (cursor === null || cursor === undefined || typeof cursor !== "string" || cursor.trim() === "") {
+    const err = new Error("The provided cursor value is invalid.");
+    err.isInvalidCursor = true;
+    err.type = "InvalidCursor";
+    err.suggestion =
+      "Use the cursor value returned in the previous response's data.cursor field.";
+    err.status = 400;
+    throw err;
+  }
+  return cursor;
+}
+
 module.exports = {
   validateAccountId,
   validateContractId,
@@ -221,4 +256,5 @@ module.exports = {
   validateLimit,
   validateOrder,
   validateAsset,
+  validateCursor,
 };

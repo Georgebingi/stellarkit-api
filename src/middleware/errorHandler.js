@@ -308,6 +308,20 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  // InvalidCursor errors — thrown by validateCursor()
+  if (err.isInvalidCursor) {
+    logError(400, req, err.message);
+    return res.status(400).json({
+      success: false,
+      error: {
+        type: "InvalidCursor",
+        message: err.message,
+        suggestion: err.suggestion ||
+          "Use the cursor value returned in the previous response's data.cursor field.",
+      },
+    });
+  }
+
   // InvalidLimit errors — thrown by validateLimit()
   if (err.isInvalidLimit) {
     logError(400, req, err.message);

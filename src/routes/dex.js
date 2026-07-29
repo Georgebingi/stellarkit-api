@@ -724,4 +724,139 @@ router.get("/top-markets", async (req, res, next) => {
   }
 });
 
+/**
+ * GET /dex/arbitrage-opportunities
+ *
+ * Scans the live Stellar DEX order books for common XLM trading pairs and
+ * returns pairs where the bid-ask spread implies a potentially profitable
+ * round-trip trade.
+ *
+ * Strategy:
+ *   For each candidate pair we fetch the top order-book level from Horizon.
+ *   When both a best-bid and best-ask exist we compute:
+ *     spread        = bestAsk − bestBid   (in the counter asset)
+ *     profitPercent = spread / midPrice × 100
+ *   A spread > 0 qualifies as an opportunity; the confidence label is derived
+ *   from the magnitude of profitPercent.
+ *
+ * Confidence thresholds:
+ *   profitPercent ≥ 2.0  → "high"
+ *   profitPercent ≥ 0.5  → "medium"
+ *   profitPercent > 0    → "low"
+ *
+ * Response shape:
+ *   {
+ *     success: true,
+ *     data: {
+ *       opportunities: [
+ *         {
+ *           buyAsset:      "XLM:native",
+ *           sellAsset:     "USDC:GA5Z...",
+ *           spread:        "0.0012340",
+ *           profitPercent: "0.9800000",
+ *           confidence:    "medium"
+ *         },
+ *         ...
+ *       ],
+ *       total:     2,
+ *       timestamp: "2024-07-01T12:00:00.000Z"
+ *     }
+ *   }
+ *
+ * Caching: 5 s TTL (configurable via CACHE_TTL_ARBITRAGE_MS).
+ *
+ * @example
+ * curl -s "http://localhost:3000/dex/arbitrage-opportunities" | jq
+ */
+router.get("/arbitrage-opportunities", async (req, res, next) => {
+  try {
+    const CACHE_KEY = "dex:arbitrage-opportunities";
+    const fresh = req.query.fresh === "true";
+
+    if (!fresh) {
+      const cached = cacheService.get(CACHE_KEY);
+      if (cached) {
+        res.set("X-Cache", "HIT");
+        return success(res, cached);
+      }
+    }
+
+    // ── Candidate XLM trading pairs ─────────────────────────────────────────
+    // Each entry is { buyAsset, sellAsset } expressed as SDK Asset objects plus
+    // human-readable label strings for the response.
+    const WELL_KNOWN_ISSUERS = {
+      USDC: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      AQUA: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+      YXLM: "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+      EURC: "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+      BTC:  "GDXTJEK4JZNSTNQV4IUSX3AQ4EACSSAXGMZQFLKQ6BKLR57ELBQINPB",
+    };
+
+    const pairs = Object.entries(WELL_KNOWN_ISSUERS).map(([code, issuer]) => ({
+      buyLabel:  "XLM:native",
+      sellLabel: `${code}:${issuer}`,
+      buying:    Asset.native(),
+      selling:   new Asset(code, issuer),
+    }));
+
+    // ── Fetch order books in parallel ──────────────────────────────────────
+    const results = await Promise.allSettled(
+      pairs.map(async (pair) => {
+        const ob = await server
+          .orderbook(pair.selling, pair.buying)
+          .limit(1)
+          .call();
+
+        const bids = ob.bids || [];
+        const asks = ob.asks || [];
+
+        if (bids.length === 0 || asks.length === 0) return null;
+
+        const bestBid = parseFloat(bids[0].price);
+        const bestAsk = parseFloat(asks[0].price);
+
+        if (bestBid <= 0 || bestAsk <= 0 || bestAsk <= bestBid) return null;
+
+        const spread       = bestAsk - bestBid;
+        const midPrice     = (bestBid + bestAsk) / 2;
+        const profitPct    = (spread / midPrice) * 100;
+
+        let confidence;
+        if (profitPct >= 2.0) {
+          confidence = "high";
+        } else if (profitPct >= 0.5) {
+          confidence = "medium";
+        } else {
+          confidence = "low";
+        }
+
+        return {
+          buyAsset:      pair.buyLabel,
+          sellAsset:     pair.sellLabel,
+          spread:        spread.toFixed(7),
+          profitPercent: profitPct.toFixed(7),
+          confidence,
+        };
+      }),
+    );
+
+    // ── Filter to profitable opportunities only ──────────────────────────────
+    const opportunities = results
+      .filter((r) => r.status === "fulfilled" && r.value !== null)
+      .map((r) => r.value);
+
+    const data = {
+      opportunities,
+      total:     opportunities.length,
+      timestamp: new Date().toISOString(),
+    };
+
+    cacheService.set(CACHE_KEY, data, cacheTTL.arbitrage);
+    res.set("X-Cache", "MISS");
+    return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
