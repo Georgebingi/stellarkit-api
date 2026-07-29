@@ -37,6 +37,7 @@ const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
+const assetsOverviewRouter = require("./routes/assetsOverview");
 
 const app = express();
 // Disable server identification header for security
@@ -230,6 +231,7 @@ app.use("/transactions", transactionsRouter);
 app.use("/asset", etagMiddleware, assetRouter);
 app.use("/dex", etagMiddleware, dexRouter);
 app.use("/liquidity-pools", etagMiddleware, liquidityPoolRouter);
+app.use("/assets-overview", etagMiddleware, assetsOverviewRouter);
 app.use("/stream", streamRouter);
 app.use("/utils", utilsRouter);
 app.use("/stellar-toml", stellarTomlRouter);
@@ -284,6 +286,7 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/dex/price/:sellAsset/:buyAsset", description: "Calculate effective exchange rate via best DEX payment path" },
         { method: "GET", path: "/liquidity-pools/:id/profitability", description: "Estimate annualized fee income for a liquidity pool" },
         { method: "GET", path: "/liquidity-pools/:id/reserve-ratio", description: "Get reserve ratio and drift from equal for a liquidity pool" },
+        { method: "GET", path: "/assets-overview", description: "Summary of total assets, trustlines, liquidity pools, and top 5 assets by trustline count"},
         { method: "GET", path: "/utils/friendbot/:accountId", description: "Fund a testnet account via Friendbot (testnet only)" },
         { method: "GET", path: "/utils/convert?xlm=:xlm", description: "Convert between XLM and stroops" },
         { method: "GET", path: "/utils/validate-account?id=:id", description: "Validate a Stellar public key format (no Horizon call)" },
