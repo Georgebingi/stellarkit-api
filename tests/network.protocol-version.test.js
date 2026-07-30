@@ -106,6 +106,7 @@ describe("GET /network/protocol-version", () => {
         suggestion:
           "Check your HORIZON_URL and verify the node is reachable. See https://status.stellar.org for network status.",
       },
+      requestId: expect.any(String),
     });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
