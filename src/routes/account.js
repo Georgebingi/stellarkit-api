@@ -608,7 +608,7 @@ router.get("/:id/multisig-info", async (req, res, next) => {
 
     const thresholds = {
       low: account.thresholds?.low_threshold ?? 0,
-      med: account.thresholds?.med_threshold ?? 0,
+      medium: account.thresholds?.med_threshold ?? 0,
       high: account.thresholds?.high_threshold ?? 0,
     };
 
@@ -623,7 +623,7 @@ router.get("/:id/multisig-info", async (req, res, next) => {
     const isMultisig = Boolean(
       signers.length > 1 ||
       thresholds.low > masterWeight ||
-      thresholds.med > masterWeight ||
+      thresholds.medium > masterWeight ||
       thresholds.high > masterWeight,
     );
 
