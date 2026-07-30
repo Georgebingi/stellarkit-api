@@ -86,7 +86,7 @@ This project is ideal for:
 | GET | `/account/:id/native-balance` | Native XLM balance only | — |
 | GET | `/account/:id/asset-balance/:assetCode/:assetIssuer` | Balance for a specific asset trustline | — |
 | GET | `/account/:id/sequence` | Current sequence number | — |
-| GET | `/account/:id/trustlines` | Trustlines with TOML asset metadata resolved | `assetCode` |
+| GET | `/account/:id/trustlines` | Trustlines with TOML asset metadata resolved | `assetCode`, `sponsored` |
 | GET | `/account/:id/payments` | Payment and create_account operations | `limit`, `order`, `cursor`, `assetCode`, `assetIssuer` |
 | GET | `/account/:id/trades` | DEX trades for the account | `limit`, `order`, `cursor`, `fresh` |
 | GET | `/account/:id/offers` | Open DEX offers for an account | `limit`, `cursor` |
@@ -562,7 +562,12 @@ curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJT
 
 ### `GET /account/:id/trustlines`
 
-Returns all trustlines for the account with TOML metadata resolved from the issuer's home domain. Filter by asset code with `?assetCode=`.
+Returns all trustlines for the account with TOML metadata resolved from the issuer's home domain. Filter by asset code with `?assetCode=`, or by sponsorship status with `?sponsored=`.
+
+| Param | Type | Required | Default | Description |
+| ----- | ---- | -------- | ------- | ----------- |
+| `assetCode` | string | No | None | Case-insensitive asset code filter. |
+| `sponsored` | boolean | No | None | `true` returns only trustlines sponsored by another account; `false` returns only unsponsored trustlines. Omitted returns all. |
 
 ```bash
 # All trustlines
@@ -570,6 +575,9 @@ curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJT
 
 # Filter to USDC only
 curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trustlines?assetCode=USDC"
+
+# Only sponsored trustlines
+curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trustlines?sponsored=true"
 ```
 
 ### `GET /account/:id/summary`

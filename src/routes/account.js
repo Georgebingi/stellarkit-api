@@ -267,6 +267,12 @@ async function resolveTrustlineToml(balance, issuerCache, tomlCache, includeMeta
 
 /**
  * GET /account/:id/trustlines
+ *
+ * Query params:
+ *   - assetCode (string, optional): filters trustlines to a single asset code
+ *   - sponsored (boolean, optional): when "true", returns only trustlines
+ *     where sponsoredBy is not null; when "false", returns only trustlines
+ *     where sponsoredBy is null. Omitted returns all trustlines.
  */
 router.get("/:id/trustlines", async (req, res, next) => {
   try {
@@ -276,11 +282,13 @@ router.get("/:id/trustlines", async (req, res, next) => {
     const fresh = req.query.fresh === "true";
     const includeMetadata = req.query.includeMetadata === "true";
     const { assetCode } = req.query;
+    const sponsored = req.query.sponsored;
+    const hasSponsoredFilter = typeof sponsored === "boolean";
     const cacheKey = `trustlines:${id}`;
 
     // Only read from cache for unfiltered requests; filtered results are subsets
     // of the full list and must not be served from the full-list cache entry.
-    if (!fresh && !assetCode) {
+    if (!fresh && !assetCode && !hasSponsoredFilter) {
       const cached = cacheService.get(cacheKey);
       if (cached) {
         res.set("X-Cache", "HIT");
@@ -307,6 +315,12 @@ router.get("/:id/trustlines", async (req, res, next) => {
       const filterLower = assetCode.toLowerCase();
       trustlines = trustlines.filter(
         (t) => t.asset.code.toLowerCase() === filterLower,
+      );
+    }
+
+    if (hasSponsoredFilter) {
+      trustlines = trustlines.filter((t) =>
+        sponsored ? t.sponsoredBy !== null : t.sponsoredBy === null,
       );
     }
 
