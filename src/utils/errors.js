@@ -65,6 +65,27 @@ function makeAssetNotFoundError(code, issuer, network) {
   return err;
 }
 
+/**
+ * Creates a structured TrustlineNotFound error for when a specific asset
+ * trustline does not exist on the given account.
+ *
+ * @param {string} address - Stellar account public key
+ * @param {string} code - Asset code (e.g. "USDC")
+ * @param {string} issuer - Asset issuer public key
+ * @returns {Error}
+ */
+function makeTrustlineNotFoundError(address, code, issuer) {
+  const err = new Error(
+    `Account '${address}' does not hold a trustline for ${code}:${issuer}.`
+  );
+  err.isTrustlineNotFound = true;
+  err.address = address;
+  err.assetCode = code;
+  err.assetIssuer = issuer;
+  err.status = 404;
+  return err;
+}
+
 module.exports = {
   HORIZON_TIMEOUT_MESSAGE,
   HORIZON_TIMEOUT_SUGGESTION,
@@ -72,4 +93,5 @@ module.exports = {
   makeHorizonTimeoutError,
   makeAccountNotFoundError,
   makeAssetNotFoundError,
+  makeTrustlineNotFoundError,
 };
