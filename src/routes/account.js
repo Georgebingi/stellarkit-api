@@ -8,18 +8,14 @@ const {
   makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
-feature/assets-overview
-const { validateAccountId, validateAssetCode , validateLimit} = require("../utils/validators");
+const { validateAccountId, validateAssetCode, validateLimit, validateISODate } = require("../utils/validators");
 
 const cacheTTL = require("../config/cacheConfig");
-const { validateAccountId, validateAssetCode } = require("../utils/validators");main
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-feature/assets-overview
-const { validateLimit, validateISODate } = require("../utils/validators");main
 const { parsePaginationParams } = require("../utils/pagination");
 
 
@@ -473,9 +469,7 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     const account = await server.loadAccount(id);
     const trustline = (account.balances || []).find(
       (b) =>
- feature/assets-overview
-        b.asset_type !== "nativ
-        isNonNativeAsset(b) && main
+        isNonNativeAsset(b) &&
         b.asset_code === assetCode &&
         b.asset_issuer === assetIssuer
     );
@@ -721,6 +715,244 @@ router.get("/:id/effects", async (req, res, next) => {
 });
 
 /**
+ * GET /account/:id/operations
+ *
+ * Returns a paginated list of operations for the specified account.
+ * Each operation includes its ID, type, creation timestamp, transaction hash,
+ * and type-specific fields (e.g. amount, asset for payments).
+ *
+ * Query params:
+ *   - limit  (number, default: 20, max: 200)
+ *   - cursor (string, optional pagination cursor)
+ *   - type   (string, optional) — filter to operations of a specific type
+ *            e.g. ?type=payment, ?type=change_trust, ?type=create_account
+ *
+ * Returns 400 if an unrecognised operation type is supplied.
+ * Returns 404 if the account does not exist.
+ *
+ * @example
+ *   GET /account/:id/operations?type=payment&limit=50
+ *   GET /account/:id/operations?cursor=123456789
+ */
+router.get("/:id/operations", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    // --- ?type= validation ---
+    const rawType = req.query.type;
+    if (rawType !== undefined) {
+      const normalizedType = String(rawType).toLowerCase().trim();
+      if (!VALID_OPERATION_TYPES.has(normalizedType)) {
+        const err = new Error(
+          `Unknown operation type "${rawType}". Valid types are: ${[...VALID_OPERATION_TYPES].sort().join(", ")}.`
+        );
+        err.isValidation = true;
+        err.field = "type";
+        err.receivedValue = rawType;
+        err.expectedFormat = [...VALID_OPERATION_TYPES].sort().join(", ");
+        return next(err);
+      }
+    }
+
+    const { limit, cursor } = parsePaginationParams(req.query, 200);
+
+    // Ensure account exists for proper 404s
+    await server.loadAccount(id);
+
+    let query = server.operations().forAccount(id).limit(limit).order("desc");
+    if (cursor) query = query.cursor(cursor);
+
+    const operationsResponse = await query.call();
+    const records = operationsResponse.records || [];
+
+    // Filter by type if requested
+    const filteredRecords = rawType
+      ? records.filter((op) => op.type === String(rawType).toLowerCase().trim())
+      : records;
+
+    const operations = filteredRecords.map((op) => {
+      const operationId = op.id;
+      const type = op.type;
+      const createdAt = toISOTimestamp(op.created_at);
+      const transactionHash = op.transaction_hash;
+
+      // Build base operation object
+      const operation = {
+        operationId,
+        type,
+        createdAt,
+        transactionHash,
+      };
+
+      // Add type-specific fields
+      // Payment operations
+      if (type === "payment") {
+        const assetType = op.asset_type || "native";
+        operation.amount = op.amount;
+        operation.asset = isNativeAsset({ type: assetType })
+          ? { code: "XLM", issuer: null, type: "native" }
+          : {
+              code: op.asset_code || null,
+              issuer: op.asset_issuer || null,
+              type: assetType,
+            };
+        operation.from = op.from;
+        operation.to = op.to;
+      }
+
+      // Create account operations
+      if (type === "create_account") {
+        operation.startingBalance = op.starting_balance;
+        operation.funder = op.funder;
+        operation.account = op.account;
+      }
+
+      // Path payment operations
+      if (type === "path_payment_strict_receive" || type === "path_payment_strict_send") {
+        operation.amount = op.amount;
+        operation.sourceAmount = op.source_amount;
+        operation.sourceMax = op.source_max;
+        operation.from = op.from;
+        operation.to = op.to;
+        
+        const sourceAssetType = op.source_asset_type || "native";
+        operation.sourceAsset = isNativeAsset({ type: sourceAssetType })
+          ? { code: "XLM", issuer: null, type: "native" }
+          : {
+              code: op.source_asset_code || null,
+              issuer: op.source_asset_issuer || null,
+              type: sourceAssetType,
+            };
+
+        const assetType = op.asset_type || "native";
+        operation.asset = isNativeAsset({ type: assetType })
+          ? { code: "XLM", issuer: null, type: "native" }
+          : {
+              code: op.asset_code || null,
+              issuer: op.asset_issuer || null,
+              type: assetType,
+            };
+      }
+
+      // Change trust operations
+      if (type === "change_trust") {
+        const assetType = op.asset_type || "credit_alphanum4";
+        operation.asset = {
+          code: op.asset_code || null,
+          issuer: op.asset_issuer || null,
+          type: assetType,
+        };
+        operation.limit = op.limit;
+        operation.trustor = op.trustor;
+      }
+
+      // Manage offer operations
+      if (
+        type === "manage_sell_offer" ||
+        type === "manage_buy_offer" ||
+        type === "create_passive_sell_offer"
+      ) {
+        operation.amount = op.amount;
+        operation.price = op.price;
+        operation.offerId = op.offer_id;
+
+        const buyingAssetType = op.buying_asset_type || "native";
+        operation.buyingAsset = isNativeAsset({ type: buyingAssetType })
+          ? { code: "XLM", issuer: null, type: "native" }
+          : {
+              code: op.buying_asset_code || null,
+              issuer: op.buying_asset_issuer || null,
+              type: buyingAssetType,
+            };
+
+        const sellingAssetType = op.selling_asset_type || "native";
+        operation.sellingAsset = isNativeAsset({ type: sellingAssetType })
+          ? { code: "XLM", issuer: null, type: "native" }
+          : {
+              code: op.selling_asset_code || null,
+              issuer: op.selling_asset_issuer || null,
+              type: sellingAssetType,
+            };
+      }
+
+      // Account merge operations
+      if (type === "account_merge") {
+        operation.account = op.account;
+        operation.into = op.into;
+      }
+
+      // Set options operations
+      if (type === "set_options") {
+        if (op.home_domain !== undefined) operation.homeDomain = op.home_domain;
+        if (op.signer_key !== undefined) {
+          operation.signer = {
+            key: op.signer_key,
+            weight: op.signer_weight,
+          };
+        }
+        if (op.master_key_weight !== undefined)
+          operation.masterKeyWeight = op.master_key_weight;
+        if (op.low_threshold !== undefined)
+          operation.lowThreshold = op.low_threshold;
+        if (op.med_threshold !== undefined)
+          operation.medThreshold = op.med_threshold;
+        if (op.high_threshold !== undefined)
+          operation.highThreshold = op.high_threshold;
+      }
+
+      // Claimable balance operations
+      if (type === "create_claimable_balance") {
+        const assetType = op.asset_type || "native";
+        operation.amount = op.amount;
+        operation.asset = isNativeAsset({ type: assetType })
+          ? { code: "XLM", issuer: null, type: "native" }
+          : {
+              code: op.asset_code || null,
+              issuer: op.asset_issuer || null,
+              type: assetType,
+            };
+      }
+
+      if (type === "claim_claimable_balance") {
+        operation.balanceId = op.balance_id;
+        operation.claimant = op.claimant;
+      }
+
+      // Liquidity pool operations
+      if (type === "liquidity_pool_deposit" || type === "liquidity_pool_withdraw") {
+        operation.liquidityPoolId = op.liquidity_pool_id;
+        if (op.reserves_max) operation.reservesMax = op.reserves_max;
+        if (op.reserves_min) operation.reservesMin = op.reserves_min;
+        if (op.reserves_deposited) operation.reservesDeposited = op.reserves_deposited;
+        if (op.reserves_received) operation.reservesReceived = op.reserves_received;
+        if (op.shares) operation.shares = op.shares;
+      }
+
+      return operation;
+    });
+
+    const nextCursor =
+      filteredRecords.length > 0
+        ? filteredRecords[filteredRecords.length - 1].paging_token || null
+        : null;
+
+    return success(res, {
+      operations,
+      total: operations.length,
+      limit,
+      cursor: operations.length ? nextCursor : null,
+    });
+  } catch (err) {
+    if (err && err.response && err.response.status === 404) {
+      return next(makeAccountNotFoundError(req.params.id, NETWORK));
+    }
+    if (err && err.isAccountNotFound) return next(err);
+    next(err);
+  }
+});
+
+/**
  * GET /account/:id/payments
  * Returns payment and create_account operations with full asset detail (including TOML metadata).
  */
@@ -736,7 +968,7 @@ router.get("/:id/payments", async (req, res, next) => {
       "subentry-health", "merge-eligibility", "offers", "payments",
       "operation-breakdown", "offer-history", "timeline", "data",
       "pool-positions", "risk-score", "trustline-health", "age", "volume",
-      "payment-summary"
+      "payment-summary", "operations"
     ];
     if (reservedWords.includes(id)) {
       return next();
