@@ -46,6 +46,7 @@ Returned when a request parameter or body value fails validation.
 | `InsufficientReserve` | 422         | Account does not have enough XLM to cover the minimum reserve requirement |
 | `OfferNotFound`       | 404         | A specific offer was requested but does not exist on the network      |
 | `TrustlineNotFound`   | 404         | The requested asset trustline does not exist on the account           |
+| `TomlFetchFailed`     | 502         | The issuer's stellar.toml could not be fetched (network error, missing file, or invalid format) |
 | `NotFound`            | 404         | Route or resource not found                                           |
 | `RateLimitError`      | 429         | Too many requests from the same IP                                    |
 | `ServerError`         | 500         | Unexpected internal error                                             |
@@ -101,6 +102,35 @@ Returned when an endpoint looks up a specific asset trustline for an account and
 - The wrong issuer address was supplied
 
 **Suggested fix:** The account must submit a `changeTrust` operation for the asset before it can hold a balance or interact with it.
+
+---
+
+## TomlFetchFailed
+
+Returned by `GET /asset/:code/:issuer/toml` when the issuer's `stellar.toml` file cannot be fetched — due to a network error, a missing file, or invalid TOML content.
+
+**Status:** `502`
+
+**Example response:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "type": "TomlFetchFailed",
+    "message": "Could not fetch stellar.toml for issuer 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'.",
+    "suggestion": "Verify the issuer has a valid stellar.toml at their home domain. See https://developers.stellar.org/docs/issuing-assets/publishing-asset-info for requirements."
+  }
+}
+```
+
+**Common causes:**
+- The issuer account has no `home_domain` set
+- The issuer's home domain is unreachable or times out
+- `/.well-known/stellar.toml` does not exist at the issuer's home domain (404)
+- The file exists but is not valid TOML
+
+**Suggested fix:** The issuer must publish a valid `stellar.toml` at `https://<home_domain>/.well-known/stellar.toml`.
 
 ---
 

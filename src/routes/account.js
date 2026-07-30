@@ -8,16 +8,20 @@ const {
   makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
+feature/assets-overview
+const { validateAccountId, validateAssetCode , validateLimit} = require("../utils/validators");
+
 const cacheTTL = require("../config/cacheConfig");
-const { validateAccountId, validateAssetCode } = require("../utils/validators");
+const { validateAccountId, validateAssetCode } = require("../utils/validators");main
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-const { validateLimit, validateISODate } = require("../utils/validators");
+feature/assets-overview
+const { validateLimit, validateISODate } = require("../utils/validators");main
 const { parsePaginationParams } = require("../utils/pagination");
-const { validateEffectType } = require("../utils/effectTypes");
+
 
 const axios = require("axios");
 const { Asset } = require("@stellar/stellar-sdk");
@@ -25,6 +29,7 @@ const { normalizeAsset, normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset, isNonNativeAsset } = require("../utils/assetHelpers");
 const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
+const { formatAmount } = require("../utils/formatAmount");
 
 // Cache TTL for account endpoint responses (in seconds)
 const CACHE_TTL_ACCOUNT = parseInt(process.env.CACHE_TTL_ACCOUNT_MS, 10) / 1000 || 10;
@@ -202,9 +207,24 @@ function normalizeClaimableBalance(balanceRecord) {
   };
 }
 
-async function resolveTrustlineToml(balance, issuerCache, tomlCache) {
+async function resolveTrustlineToml(balance, issuerCache, tomlCache, includeMetadata) {
   const assetIssuer = balance.asset_issuer;
   const assetCode = balance.asset_code;
+
+  if (!includeMetadata) {
+    return {
+      asset: {
+        code: assetCode,
+        issuer: assetIssuer,
+        type: balance.asset_type,
+      },
+      balance: balance.balance,
+      limit: balance.limit,
+      isAuthorized: balance.is_authorized,
+      isAuthorizedToMaintainLiabilities:
+        balance.is_authorized_to_maintain_liabilities,
+    };
+  }
 
   if (!issuerCache.has(assetIssuer)) {
     issuerCache.set(
@@ -241,8 +261,7 @@ async function resolveTrustlineToml(balance, issuerCache, tomlCache) {
     isAuthorized: balance.is_authorized,
     isAuthorizedToMaintainLiabilities:
       balance.is_authorized_to_maintain_liabilities,
-    sponsoredBy: balance.sponsor || balance.sponsored_by || null,
-    toml,
+    metadata: toml,
   };
 }
 
@@ -261,6 +280,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
     validateAccountId(id);
 
     const fresh = req.query.fresh === "true";
+    const includeMetadata = req.query.includeMetadata === "true";
     const { assetCode } = req.query;
     const sponsored = req.query.sponsored;
     const hasSponsoredFilter = typeof sponsored === "boolean";
@@ -287,7 +307,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
 
     let trustlines = await Promise.all(
       trustlineBalances.map((b) =>
-        resolveTrustlineToml(b, issuerCache, tomlCache),
+        resolveTrustlineToml(b, issuerCache, tomlCache, includeMetadata),
       ),
     );
 
@@ -453,7 +473,9 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     const account = await server.loadAccount(id);
     const trustline = (account.balances || []).find(
       (b) =>
-        isNonNativeAsset(b) &&
+ feature/assets-overview
+        b.asset_type !== "nativ
+        isNonNativeAsset(b) && main
         b.asset_code === assetCode &&
         b.asset_issuer === assetIssuer
     );
@@ -1696,6 +1718,115 @@ router.get("/:id/subentry-health", async (req, res, next) => {
         dataEntries,
         additionalSigners,
       },
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
+/**
+ * GET /account/:id/reserve-breakdown
+ *
+ * Returns a detailed breakdown of an account's minimum XLM reserve
+ * requirement so wallet UIs can clearly explain why funds are locked.
+ *
+ * Each Stellar account must hold at least `(2 + subentry_count) * base_reserve`
+ * XLM. This endpoint returns the base reserve, the subentry count, a per-type
+ * breakdown of every subentry contributing to the reserve, the total minimum
+ * reserve, and the spendable (available) balance after subtracting the
+ * minimum reserve from the native XLM balance.
+ *
+ * All monetary amounts are seven-decimal strings (e.g. "0.5000000") to match
+ * Stellar on-ledger precision and the format used by other endpoints.
+ *
+ * Response shape:
+ *   {
+ *     success: true,
+ *     data: {
+ *       baseReserve:         "0.5000000",
+ *       subentryCount:       5,
+ *       subentries: [
+ *         { type, count, reservePerSubentry, totalReserve }, ...
+ *       ],
+ *       totalMinimumReserve: "3.5000000",
+ *       availableBalance:    "96.5000000"
+ *     }
+ *   }
+ *
+ * Returns 404 when the account does not exist on the configured network.
+ *
+ * @example
+ *   GET /account/GABC.../reserve-breakdown
+ */
+router.get("/:id/reserve-breakdown", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    const account = await server.loadAccount(id);
+
+    // BASE_RESERVE matches the existing /account/:id handler and the rest of
+    // the codebase, which use 0.5 XLM (5 000 000 stroops) as the protocol-wide
+    // base reserve. The on-ledger base reserve is rarely changed by validator
+    // voting; when it is, update this constant globally.
+    const BASE_RESERVE = 0.5;
+    const reservePerSubentry = formatAmount(BASE_RESERVE.toFixed(7));
+
+    // Per-type subentry counts. Trustlines, data entries and additional
+    // signers are counted directly from Horizon payload fields; offers are
+    // inferred from any remaining subentries, mirroring the established
+    // /account/:id/subentry-health breakdown logic.
+    const trustlines = (account.balances || []).filter(
+      (b) => isNonNativeAsset(b),
+    ).length;
+    const dataEntries = Object.keys(account.data_attr || {}).length;
+    const additionalSigners = Math.max(
+      0,
+      (account.signers || []).length - 1,
+    );
+    const totalSubentries = account.subentry_count || 0;
+    const inferredOffers = Math.max(
+      0,
+      totalSubentries - trustlines - dataEntries - additionalSigners,
+    );
+
+    const buildSubentryEntry = (type, count) => ({
+      type,
+      count,
+      reservePerSubentry,
+      totalReserve: formatAmount((count * BASE_RESERVE).toFixed(7)),
+    });
+
+    const subentries = [
+      buildSubentryEntry("trustlines", trustlines),
+      buildSubentryEntry("offers", inferredOffers),
+      buildSubentryEntry("dataEntries", dataEntries),
+      buildSubentryEntry("signers", additionalSigners),
+    ];
+
+    // Total minimum reserve = (2 + subentryCount) * baseReserve.
+    // Computed once and reused for totalMinimumReserve and availableBalance
+    // so the two fields always stay in lock-step.
+    const totalLockedXLM = (2 + totalSubentries) * BASE_RESERVE;
+    const totalMinimumReserve = formatAmount(totalLockedXLM.toFixed(7));
+
+    // spendableBalance = XLM balance - total minimum reserve. parseFloat is
+    // safe here because Horizon always returns a decimal string for the
+    // native balance and `(2 + n) * 0.5` is exact in IEEE-754.
+    const xlmBalanceEntry = (account.balances || []).find((b) =>
+      isNativeAsset(b),
+    );
+    const xlmBalanceNumber = parseFloat(xlmBalanceEntry?.balance || "0");
+    const availableBalance = formatAmount(
+      (xlmBalanceNumber - totalLockedXLM).toFixed(7),
+    );
+
+    return success(res, {
+      baseReserve: reservePerSubentry,
+      subentryCount: totalSubentries,
+      subentries,
+      totalMinimumReserve,
+      availableBalance,
     });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);

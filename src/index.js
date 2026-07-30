@@ -246,6 +246,7 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/fee-estimate/surge-status", description: "Identify fee surge periods and get actionable recommendations" },
         { method: "GET", path: "/fee-estimate/trends", description: "Analyze fee trends across last 50 ledgers with statistical summary" },
         { method: "GET", path: "/account/:id", description: "Account details, balances, signers" },
+        { method: "GET", path: "/account/:id/reserve-breakdown", description: "Per-type breakdown of the minimum XLM reserve requirement" },
         { method: "GET", path: "/account/:id/age", description: "Account age and longevity metrics" },
         { method: "GET", path: "/account/:id/balances", description: "XLM and asset balances for an account" },
         { method: "GET", path: "/account/:id/sequence", description: "Current sequence number for an account" },
