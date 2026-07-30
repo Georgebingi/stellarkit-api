@@ -86,6 +86,24 @@ function makeTrustlineNotFoundError(address, code, issuer) {
   return err;
 }
 
+/**
+ * Creates a structured TomlFetchFailed error for when an issuer's
+ * stellar.toml file cannot be fetched — due to a network error, a
+ * missing file, or invalid TOML content.
+ *
+ * @param {string} issuer - Stellar public key of the asset issuer
+ * @returns {Error}
+ */
+function makeTomlFetchFailedError(issuer) {
+  const err = new Error(
+    `Could not fetch stellar.toml for issuer '${issuer}'.`
+  );
+  err.isTomlFetchFailed = true;
+  err.issuer = issuer;
+  err.status = 502;
+  return err;
+}
+
 module.exports = {
   HORIZON_TIMEOUT_MESSAGE,
   HORIZON_TIMEOUT_SUGGESTION,
@@ -94,4 +112,5 @@ module.exports = {
   makeAccountNotFoundError,
   makeAssetNotFoundError,
   makeTrustlineNotFoundError,
+  makeTomlFetchFailedError,
 };

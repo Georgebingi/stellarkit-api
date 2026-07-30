@@ -10,9 +10,10 @@ const { assetHoldersRateLimiter } = require("../middleware/rateLimiter");
 const normalizeAssetCode = require("../middleware/normalizeAssetCode");
 const { validateAccountId, validateAssetCode, validateAsset, validateLimit } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
-const { makeAssetNotFoundError } = require("../utils/errors");
+const { makeAssetNotFoundError, makeAccountNotFoundError, makeTomlFetchFailedError } = require("../utils/errors");
 const cacheTTL = require("../config/cacheConfig");
 const { normalizeAsset } = require("../utils/asset");
+const { fetchNormalisedToml } = require("../utils/tomlResolver");
 router.use(normalizeAssetCode);
 
 const DEFAULT_ASSET_HOLDERS_CACHE_TTL_MS = 30000;
@@ -591,6 +592,53 @@ router.get("/:code/:issuer/verify", async (req, res, next) => {
   }
 });
 
+
+/**
+ * GET /asset/:code/:issuer/toml
+ * Resolves the issuer's home_domain and fetches/returns their normalised
+ * stellar.toml. Returns a specific TomlFetchFailed error (502) when the
+ * TOML cannot be fetched — due to a network error, a missing file, or
+ * invalid TOML content.
+ *
+ * @param {string} code   - Asset code (e.g. USDC)
+ * @param {string} issuer - Issuer account public key (G...)
+ *
+ * @example
+ * GET /asset/USDC/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/toml
+ */
+router.get("/:code/:issuer/toml", async (req, res, next) => {
+  try {
+    const { code, issuer } = req.params;
+    validateAsset(code, issuer);
+
+    let issuerAccount;
+    try {
+      issuerAccount = await server.loadAccount(issuer);
+    } catch (err) {
+      throw makeAccountNotFoundError(issuer, NETWORK);
+    }
+
+    const homeDomain = issuerAccount.home_domain;
+    if (!homeDomain) {
+      throw makeTomlFetchFailedError(issuer);
+    }
+
+    let toml;
+    try {
+      ({ toml } = await fetchNormalisedToml(homeDomain));
+    } catch (err) {
+      throw makeTomlFetchFailedError(issuer);
+    }
+
+    if (!toml) {
+      throw makeTomlFetchFailedError(issuer);
+    }
+
+    return success(res, toml);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /asset/:code/:issuer/price
