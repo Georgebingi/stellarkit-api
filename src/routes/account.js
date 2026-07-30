@@ -8,18 +8,18 @@ const {
   makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
-feature/assets-overview
-const { validateAccountId, validateAssetCode , validateLimit} = require("../utils/validators");
-
 const cacheTTL = require("../config/cacheConfig");
-const { validateAccountId, validateAssetCode } = require("../utils/validators");main
+const {
+  validateAccountId,
+  validateAssetCode,
+  validateLimit,
+  validateISODate,
+} = require("../utils/validators");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-feature/assets-overview
-const { validateLimit, validateISODate } = require("../utils/validators");main
 const { parsePaginationParams } = require("../utils/pagination");
 
 
@@ -471,27 +471,23 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     }
 
     const account = await server.loadAccount(id);
+    const normalizedAssetCode = assetCode.toUpperCase();
     const trustline = (account.balances || []).find(
       (b) =>
- feature/assets-overview
-        b.asset_type !== "nativ
-        isNonNativeAsset(b) && main
-        b.asset_code === assetCode &&
+        isNonNativeAsset(b) &&
+        b.asset_code === normalizedAssetCode &&
         b.asset_issuer === assetIssuer
     );
 
     if (!trustline) {
-      const err = new Error(`Account ${id} does not hold asset ${assetCode}:${assetIssuer}`);
-      err.isAssetNotFound = true;
-      err.status = 404;
-      return next(err);
+      return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
     }
 
-    const assetType = assetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
+    const assetType = normalizedAssetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
 
     const data = {
       asset: {
-        code: assetCode,
+        code: normalizedAssetCode,
         issuer: assetIssuer,
         type: assetType,
       },
@@ -3557,7 +3553,6 @@ router.get("/:id/timeline", async (req, res, next) => {
  * - maturity: 'new' (<30 days), 'established' (30–364 days), or 'veteran' (≥365 days)
  * - createdAt: ISO 8601 timestamp of account creation
  * - createdAtLedger: Ledger sequence number of first funding transaction
- main
  *
  * @param {string} id - Stellar account public key (G...)
  *

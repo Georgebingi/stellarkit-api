@@ -86,6 +86,11 @@ function buildFeeObject(stroops) {
   };
 }
 
+function parseStroops(value) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 
 /**
  * GET /network/validators
@@ -243,8 +248,9 @@ router.get("/fee-percentiles", async (req, res, next) => {
     const feeCharged = feeStats.fee_charged || {};
     const feeAccepted = feeStats.fee_accepted || feeCharged;
 
-    const minFeeStroops = parseInt(feeAccepted.min || feeCharged.min, 10);
-    const maxFeeStroops = parseInt(feeAccepted.max || feeCharged.max, 10);
+    const minFeeStroops = parseStroops(feeAccepted.min || feeCharged.min);
+    const maxFeeStroops = parseStroops(feeAccepted.max || feeCharged.max);
+    const baseFeeStroops = parseStroops(feeStats.last_ledger_base_fee);
 
     const txResponse = await server
       .transactions()
@@ -261,7 +267,7 @@ router.get("/fee-percentiles", async (req, res, next) => {
     for (const p of PERCENTILE_LEVELS) {
       const sourceValue = feeCharged[`p${p}`];
       if (sourceValue !== undefined && sourceValue !== null) {
-        percentiles[`p${p}`] = buildFeeObject(parseInt(sourceValue, 10));
+        percentiles[`p${p}`] = buildFeeObject(parseStroops(sourceValue));
       } else {
         percentiles[`p${p}`] = buildFeeObject(computePercentile(fees, p));
       }
@@ -269,11 +275,13 @@ router.get("/fee-percentiles", async (req, res, next) => {
 
     const data = {
       percentiles,
+      baseFee: buildFeeObject(baseFeeStroops),
       minFee: buildFeeObject(minFeeStroops),
       maxFee: buildFeeObject(maxFeeStroops),
       ledgerSequence: latestLedger.sequence
         ? parseInt(latestLedger.sequence, 10)
         : null,
+      timestamp: new Date().toISOString(),
     };
 
     cacheService.set(cacheKey, data, FEE_PERCENTILES_CACHE_TTL);
