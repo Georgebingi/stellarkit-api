@@ -7,15 +7,14 @@ const {
   makeClaimableBalanceNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
-const { validateAccountId, validateAssetCode } = require("../utils/validators");
+const { validateAccountId, validateAssetCode , validateLimit} = require("../utils/validators");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-const { validateAccountId, validateLimit } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
-const { validateEffectType } = require("../utils/effectTypes");
+
 
 const axios = require("axios");
 const { Asset } = require("@stellar/stellar-sdk");
@@ -166,9 +165,24 @@ function normalizeClaimableBalance(balanceRecord) {
   };
 }
 
-async function resolveTrustlineToml(balance, issuerCache, tomlCache) {
+async function resolveTrustlineToml(balance, issuerCache, tomlCache, includeMetadata) {
   const assetIssuer = balance.asset_issuer;
   const assetCode = balance.asset_code;
+
+  if (!includeMetadata) {
+    return {
+      asset: {
+        code: assetCode,
+        issuer: assetIssuer,
+        type: balance.asset_type,
+      },
+      balance: balance.balance,
+      limit: balance.limit,
+      isAuthorized: balance.is_authorized,
+      isAuthorizedToMaintainLiabilities:
+        balance.is_authorized_to_maintain_liabilities,
+    };
+  }
 
   if (!issuerCache.has(assetIssuer)) {
     issuerCache.set(
@@ -205,7 +219,7 @@ async function resolveTrustlineToml(balance, issuerCache, tomlCache) {
     isAuthorized: balance.is_authorized,
     isAuthorizedToMaintainLiabilities:
       balance.is_authorized_to_maintain_liabilities,
-    toml,
+    metadata: toml,
   };
 }
 
@@ -218,6 +232,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
     validateAccountId(id);
 
     const fresh = req.query.fresh === "true";
+    const includeMetadata = req.query.includeMetadata === "true";
     const { assetCode } = req.query;
     const cacheKey = `trustlines:${id}`;
 
@@ -242,7 +257,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
 
     let trustlines = await Promise.all(
       trustlineBalances.map((b) =>
-        resolveTrustlineToml(b, issuerCache, tomlCache),
+        resolveTrustlineToml(b, issuerCache, tomlCache, includeMetadata),
       ),
     );
 
@@ -383,7 +398,7 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
 
     const account = await server.loadAccount(id);
     const trustline = (account.balances || []).find(
-      (b) => 
+      (b) =>
         b.asset_type !== "native" &&
         b.asset_code === assetCode &&
         b.asset_issuer === assetIssuer
