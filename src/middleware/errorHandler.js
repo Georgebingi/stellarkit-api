@@ -320,6 +320,21 @@ function errorHandler(err, req, res, next) {
     }, req));
   }
 
+  // TomlFetchFailed errors — issuer's stellar.toml could not be fetched
+  // (network error, missing file, or invalid format)
+  if (err.isTomlFetchFailed) {
+    logError(502, req, err.message);
+    return res.status(502).json(withRequestId({
+      success: false,
+      error: {
+        type: "TomlFetchFailed",
+        message: err.message,
+        suggestion:
+          "Verify the issuer has a valid stellar.toml at their home domain. See https://developers.stellar.org/docs/issuing-assets/publishing-asset-info for requirements.",
+      },
+    }, req));
+  }
+
   // InvalidAccountId errors — thrown by validateAccountId(id)
   if (err.isInvalidAccountId) {
     logError(400, req, err.message);
