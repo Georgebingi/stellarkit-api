@@ -8,18 +8,15 @@ const {
   makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
-feature/assets-overview
 const { validateAccountId, validateAssetCode , validateLimit} = require("../utils/validators");
 
 const cacheTTL = require("../config/cacheConfig");
-const { validateAccountId, validateAssetCode } = require("../utils/validators");main
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
-feature/assets-overview
-const { validateLimit, validateISODate } = require("../utils/validators");main
+const { validateISODate } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 
 
@@ -29,6 +26,7 @@ const { normalizeAsset, normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset, isNonNativeAsset } = require("../utils/assetHelpers");
 const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
+const { normalizeOperation } = require("../utils/operationFormatter");
 const { formatAmount } = require("../utils/formatAmount");
 
 // Cache TTL for account endpoint responses (in seconds)
@@ -473,9 +471,7 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     const account = await server.loadAccount(id);
     const trustline = (account.balances || []).find(
       (b) =>
- feature/assets-overview
-        b.asset_type !== "nativ
-        isNonNativeAsset(b) && main
+        isNonNativeAsset(b) &&
         b.asset_code === assetCode &&
         b.asset_issuer === assetIssuer
     );
@@ -3557,7 +3553,6 @@ router.get("/:id/timeline", async (req, res, next) => {
  * - maturity: 'new' (<30 days), 'established' (30–364 days), or 'veteran' (≥365 days)
  * - createdAt: ISO 8601 timestamp of account creation
  * - createdAtLedger: Ledger sequence number of first funding transaction
- main
  *
  * @param {string} id - Stellar account public key (G...)
  *
@@ -3671,6 +3666,7 @@ router.get("/:id/transactions", async (req, res, next) => {
       }
     }
 
+    const includeOperations = req.query.includeOperations === true;
     const { limit, order, cursor } = parsePaginationParams(req.query, 200);
     const STROOPS_PER_XLM = 10_000_000;
 
