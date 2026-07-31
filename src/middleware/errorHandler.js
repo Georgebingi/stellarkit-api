@@ -357,7 +357,7 @@ function errorHandler(err, req, res, next) {
         type: "InvalidCursor",
         message: err.message,
         suggestion: err.suggestion ||
-          "Use the cursor value returned in the previous response's data.cursor field.",
+          "Use the cursor returned in the previous response.",
       },
     }, req));
   }
