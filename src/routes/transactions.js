@@ -8,6 +8,7 @@ const { validateAccountId } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { makeAccountNotFoundError } = require("../utils/errors");
 const { normalizeAsset } = require("../utils/asset");
+const { parseStellarAmount } = require("../utils/parseStellarAmount");
 
 function handleAccountNotFound(err, next, accountId) {
   if (err && err.response && err.response.status === 404) {
@@ -97,8 +98,6 @@ router.get("/:id", async (req, res, next) => {
 
     const txResponse = await query.call();
 
-    const STROOPS_PER_XLM = 10_000_000;
-
     const transactions = txResponse.records.map((tx) => {
       const chargedInStroops = parseInt(tx.fee_charged, 10);
       const opCount = tx.operation_count || 1;
@@ -112,16 +111,16 @@ router.get("/:id", async (req, res, next) => {
         sourceAccount: tx.source_account,
         fee: {
           charged: tx.fee_charged,
-          chargedInXLM: (chargedInStroops / STROOPS_PER_XLM).toFixed(7),
+          chargedInXLM: parseStellarAmount(chargedInStroops),
           max: tx.max_fee,
-          maxInXLM: (parseInt(tx.max_fee, 10) / STROOPS_PER_XLM).toFixed(7),
+          maxInXLM: parseStellarAmount(parseInt(tx.max_fee, 10)),
           account: tx.fee_account,
         },
         feeSummary: {
           chargedInStroops: chargedInStroops,
-          chargedInXLM: (chargedInStroops / STROOPS_PER_XLM).toFixed(7),
+          chargedInXLM: parseStellarAmount(chargedInStroops),
           perOperationInStroops: perOpStroops,
-          perOperationInXLM: (perOpStroops / STROOPS_PER_XLM).toFixed(7),
+          perOperationInXLM: parseStellarAmount(perOpStroops),
         },
         operationCount: tx.operation_count,
         memoType: tx.memo_type,

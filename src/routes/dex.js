@@ -6,7 +6,7 @@ const { Asset } = require("@stellar/stellar-sdk");
 const { server } = require("../config/stellar");
 const { success } = require("../utils/response");
 const { validateAssetCode, validateAccountId, validateAsset, validateLimit } = require("../utils/validators");
-const { parseStellarAsset } = require("../utils/asset");
+const { parseStellarAsset, normalizeAsset } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
@@ -751,8 +751,8 @@ router.get("/top-markets", async (req, res, next) => {
  *     data: {
  *       opportunities: [
  *         {
- *           buyAsset:      "XLM:native",
- *           sellAsset:     "USDC:GA5Z...",
+ *           buyAsset:      { code: "XLM", issuer: null, type: "native" },
+ *           sellAsset:     { code: "USDC", issuer: "GA5Z...", type: "credit_alphanum4" },
  *           spread:        "0.0012340",
  *           profitPercent: "0.9800000",
  *           confidence:    "medium"
@@ -794,10 +794,10 @@ router.get("/arbitrage-opportunities", async (req, res, next) => {
     };
 
     const pairs = Object.entries(WELL_KNOWN_ISSUERS).map(([code, issuer]) => ({
-      buyLabel:  "XLM:native",
-      sellLabel: `${code}:${issuer}`,
-      buying:    Asset.native(),
-      selling:   new Asset(code, issuer),
+      buyAsset: normalizeAsset("XLM", null, "native"),
+      sellAsset: normalizeAsset(code, issuer),
+      buying: Asset.native(),
+      selling: new Asset(code, issuer),
     }));
 
     // ── Fetch order books in parallel ──────────────────────────────────────
@@ -832,11 +832,11 @@ router.get("/arbitrage-opportunities", async (req, res, next) => {
         }
 
         return {
-          buyAsset:      pair.buyLabel,
-          sellAsset:     pair.sellLabel,
-          spread:        spread.toFixed(7),
+          buyAsset: pair.buyAsset,
+          sellAsset: pair.sellAsset,
+          spread: spread.toFixed(7),
           profitPercent: profitPct.toFixed(7),
-          confidence,
+          confidence: confidence.toLowerCase(),
         };
       }),
     );

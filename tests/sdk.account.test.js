@@ -70,6 +70,20 @@ try {
       return { accountId: account.accountId, signers: account.signers, thresholds: account.thresholds };
     }
     getSigningKeys(id) { return this._get(`/account/${id}/signing-keys`); }
+    async getAssetBalance(id, assetCode, assetIssuer) {
+      if (!id || typeof id !== "string" || id.trim() === "") {
+        throw new StellarKitError("id is required and must be a non-empty string", 400, "ValidationError");
+      }
+      if (!assetCode || typeof assetCode !== "string" || assetCode.trim() === "") {
+        throw new StellarKitError("assetCode is required and must be a non-empty string", 400, "ValidationError");
+      }
+      if (!assetIssuer || typeof assetIssuer !== "string" || assetIssuer.trim() === "") {
+        throw new StellarKitError("assetIssuer is required and must be a non-empty string", 400, "ValidationError");
+      }
+      return this._get(
+        `/account/${id}/asset-balance/${encodeURIComponent(assetCode)}/${encodeURIComponent(assetIssuer)}`,
+      );
+    }
     getAge(id) { return this._get(`/account/${id}/age`); }
     getRiskScore(id) { return this._get(`/account/${id}/risk-score`); }
     getSequence(id) { return this._get(`/account/${id}/sequence`); }
@@ -208,6 +222,16 @@ const SPONSORSHIPS_DATA = {
   ],
   sponsoring: ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"],
   count: 1,
+};
+
+const ASSET_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+const ASSET_BALANCE_DATA = {
+  asset: { code: "USDC", issuer: ASSET_ISSUER, type: "credit_alphanum4" },
+  balance: "100.0000000",
+  limit: "10000.0000000",
+  buyingLiabilities: "0.0000000",
+  sellingLiabilities: "5.0000000",
+  isAuthorized: true,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -522,6 +546,62 @@ describe("AccountModule", () => {
     it("throws StellarKitError on failure", async () => {
       mockFetch(404, { success: false, error: { message: "Not found", type: "NOT_FOUND" } });
       await expect(module.getOffers(ACCOUNT_ID)).rejects.toThrow(StellarKitError);
+    });
+  });
+
+  // ── getAssetBalance ────────────────────────────────────────────────────────
+
+  describe("getAssetBalance", () => {
+    it("calls GET /account/:id/asset-balance/:assetCode/:assetIssuer and resolves data", async () => {
+      mockFetch(200, { success: true, data: ASSET_BALANCE_DATA });
+      const data = await module.getAssetBalance(ACCOUNT_ID, "USDC", ASSET_ISSUER);
+      expect(data.asset).toEqual({
+        code: "USDC",
+        issuer: ASSET_ISSUER,
+        type: "credit_alphanum4",
+      });
+      expect(data.balance).toBe("100.0000000");
+      expect(data.isAuthorized).toBe(true);
+      expect(global.fetch).toHaveBeenCalledWith(
+        `${BASE_URL}/account/${ACCOUNT_ID}/asset-balance/USDC/${ASSET_ISSUER}`,
+        expect.any(Object),
+      );
+    });
+
+    it("throws StellarKitError with type TrustlineNotFound when asset is not held", async () => {
+      mockFetch(404, {
+        success: false,
+        error: {
+          message: "Trustline not found",
+          type: "TrustlineNotFound",
+        },
+      });
+      try {
+        await module.getAssetBalance(ACCOUNT_ID, "USDC", ASSET_ISSUER);
+        fail("Expected StellarKitError to be thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(StellarKitError);
+        expect(err.status).toBe(404);
+        expect(err.type).toBe("TrustlineNotFound");
+      }
+    });
+
+    it("throws ValidationError when id is empty", async () => {
+      await expect(module.getAssetBalance("", "USDC", ASSET_ISSUER)).rejects.toThrow(StellarKitError);
+      try {
+        await module.getAssetBalance("", "USDC", ASSET_ISSUER);
+      } catch (err) {
+        expect(err.status).toBe(400);
+        expect(err.type).toBe("ValidationError");
+      }
+    });
+
+    it("throws ValidationError when assetCode is empty", async () => {
+      await expect(module.getAssetBalance(ACCOUNT_ID, "", ASSET_ISSUER)).rejects.toThrow(StellarKitError);
+    });
+
+    it("throws ValidationError when assetIssuer is empty", async () => {
+      await expect(module.getAssetBalance(ACCOUNT_ID, "USDC", "")).rejects.toThrow(StellarKitError);
     });
   });
 
