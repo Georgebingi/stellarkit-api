@@ -6,6 +6,7 @@ const cors = require("cors");
 const compression = require("compression");
 
 const logger = require("./utils/logger");
+const { parseStellarAmount } = require("./utils/parseStellarAmount");
 const { setupWebSocket } = require("./websocket");
 const { server } = require("./config/stellar");
 const cacheService = require("./services/cache");
@@ -66,9 +67,9 @@ async function warmNetworkStatusCache({
     },
     fees: {
       baseFeeInStroops: latest.base_fee_in_stroops,
-      baseFeeInXLM: (latest.base_fee_in_stroops / 1e7).toFixed(7),
+      baseFeeInXLM: parseStellarAmount(latest.base_fee_in_stroops),
       basereserveInStroops: latest.base_reserve_in_stroops,
-      baseReserveInXLM: (latest.base_reserve_in_stroops / 1e7).toFixed(7),
+      baseReserveInXLM: parseStellarAmount(latest.base_reserve_in_stroops),
     },
     protocol: {
       version: latest.protocol_version,
@@ -96,34 +97,32 @@ async function warmFeeEstimateCache({
     perOperation: {
       economy: {
         stroops: parseInt(feeStats.fee_charged.min),
-        xlm: (parseInt(feeStats.fee_charged.min) / 1e7).toFixed(7),
+        xlm: parseStellarAmount(parseInt(feeStats.fee_charged.min)),
         description: "Minimum — may be slow during congestion",
       },
       standard: {
         stroops: recommended,
-        xlm: (recommended / 1e7).toFixed(7),
+        xlm: parseStellarAmount(recommended),
         description: "Recommended for most transactions",
       },
       priority: {
         stroops: priority,
-        xlm: (priority / 1e7).toFixed(7),
+        xlm: parseStellarAmount(priority),
         description: "Fast inclusion even during high network load",
       },
     },
     totalFee: {
       economy: {
         stroops: parseInt(feeStats.fee_charged.min) * operations,
-        xlm: ((parseInt(feeStats.fee_charged.min) * operations) / 1e7).toFixed(
-          7,
-        ),
+        xlm: parseStellarAmount(parseInt(feeStats.fee_charged.min) * operations),
       },
       standard: {
         stroops: recommended * operations,
-        xlm: ((recommended * operations) / 1e7).toFixed(7),
+        xlm: parseStellarAmount(recommended * operations),
       },
       priority: {
         stroops: priority * operations,
-        xlm: ((priority * operations) / 1e7).toFixed(7),
+        xlm: parseStellarAmount(priority * operations),
       },
     },
     networkStats: {

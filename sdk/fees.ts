@@ -50,15 +50,31 @@ export interface FeeTrendsData {
   };
 }
 
-/** Fee percentiles response data. */
+/** A fee value expressed in both stroops and XLM. */
+export interface FeeAmount {
+  /** Fee in stroops (integer). */
+  stroops: number;
+  /** Fee in XLM as a seven-decimal string (e.g. "0.0000100"). */
+  xlm: string;
+}
+
+/** Fee percentiles response data from GET /network/fee-percentiles. */
 export interface FeePercentiles {
-  p10: number;
-  p50: number;
-  p90: number;
-  p95: number;
-  p99: number;
-  lastLedgerBaseFee: number;
-  ledgerCapacityUsage: number;
+  percentiles: {
+    p10: FeeAmount;
+    p20: FeeAmount;
+    p30: FeeAmount;
+    p50: FeeAmount;
+    p70: FeeAmount;
+    p90: FeeAmount;
+    p95: FeeAmount;
+    p99: FeeAmount;
+  };
+  baseFee: FeeAmount;
+  minFee: FeeAmount;
+  maxFee: FeeAmount;
+  ledgerSequence: number | null;
+  timestamp: string;
 }
 
 /**

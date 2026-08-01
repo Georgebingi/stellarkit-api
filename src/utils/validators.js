@@ -74,6 +74,38 @@ function validateAccountId(accountId) {
   }
 }
 
+/**
+ * Validate a Stellar public key in lightweight boolean form.
+ *
+ * @param {string|null|undefined} address
+ * @returns {boolean}
+ */
+function validateStellarAddress(address) {
+  if (typeof address !== "string") return false;
+  const trimmed = address.trim();
+  if (!trimmed) return false;
+  if (!trimmed.startsWith("G")) return false;
+  if (trimmed.length !== 56) return false;
+  return StrKey.isValidEd25519PublicKey(trimmed);
+}
+
+/**
+ * Validate a credential type token.
+ *
+ * Allowed characters: letters, digits, underscore, dash, and dot.
+ * Maximum length: 64 characters.
+ *
+ * @param {string|null|undefined} type
+ * @returns {boolean}
+ */
+function validateCredentialType(type) {
+  if (typeof type !== "string") return false;
+  const trimmed = type.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > 64) return false;
+  return /^[A-Za-z0-9._-]+$/.test(trimmed);
+}
+
 function validateContractId(contractId) {
   if (!contractId) {
     throw makeValidationError(
@@ -291,4 +323,6 @@ module.exports = {
   validateAsset,
   validateCursor,
   validateISODate,
+  validateStellarAddress,
+  validateCredentialType,
 };

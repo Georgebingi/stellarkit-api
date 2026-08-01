@@ -72,6 +72,58 @@ export interface NativeBalance {
 }
 
 /**
+ * Standard StellarKit asset identifier: `{ code, issuer, type }`.
+ */
+export interface AssetRef {
+  /** Asset code (e.g. "USDC") or "XLM" for native. */
+  code: string;
+  /** Issuer public key, or `null` for native XLM. */
+  issuer: string | null;
+  /** Asset type: "native" | "credit_alphanum4" | "credit_alphanum12". */
+  type: string;
+}
+
+/**
+ * Balance for a specific asset trustline returned by
+ * GET /account/:id/asset-balance/:assetCode/:assetIssuer.
+ */
+export interface AssetBalance {
+  /** Normalised asset identifier. */
+  asset: AssetRef;
+  /** Current balance as a seven-decimal string. */
+  balance: string;
+  /** Trustline limit as a seven-decimal string. */
+  limit: string;
+  /** Amount reserved for buying liabilities. */
+  buyingLiabilities: string;
+  /** Amount reserved for selling liabilities. */
+  sellingLiabilities: string;
+  /** Whether the trustline is authorized by the issuer. */
+  isAuthorized: boolean;
+}
+
+/**
+ * Signing key configuration returned by GET /account/:id/signing-keys.
+ */
+export interface SigningKeys {
+  /** Account signers with weights and types. */
+  signers: Array<{
+    key: string;
+    weight: number;
+    type: string;
+    sponsoredBy: string | null;
+  }>;
+  /** Master key weight for the account. */
+  masterWeight: number;
+  /** Operation thresholds (camelCase). */
+  thresholds: {
+    lowThreshold: number;
+    medThreshold: number;
+    highThreshold: number;
+  };
+}
+
+/**
  * A single sponsored entry for an account.
  */
 export interface SponsoredEntry {
@@ -184,6 +236,43 @@ export class AccountModule {
       throw new StellarKitError("id is required and must be a non-empty string", 400, "ValidationError");
     }
     return this._get<NativeBalance>(`/account/${id}/native-balance`);
+  }
+
+  /**
+   * Get the balance for a specific asset trustline on an account.
+   *
+   * Calls `GET /account/:id/asset-balance/:assetCode/:assetIssuer`.
+   *
+   * @param id - Stellar account public key (non-empty string).
+   * @param assetCode - Asset code (e.g. "USDC").
+   * @param assetIssuer - Issuer public key (G...).
+   * @returns Resolves to an {@link AssetBalance} with normalised asset shape and seven-decimal amounts.
+   * @throws {StellarKitError} If `id`, `assetCode`, or `assetIssuer` is missing/empty.
+   * @throws {StellarKitError} With `type: "TrustlineNotFound"` when the account does not hold the asset.
+   *
+   * @example
+   * const account = new AccountModule({ baseUrl: "http://localhost:3000" });
+   * const usdc = await account.getAssetBalance(
+   *   "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+   *   "USDC",
+   *   "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+   * );
+   * console.log(usdc.asset.code); // "USDC"
+   * console.log(usdc.balance);    // "100.0000000"
+   */
+  async getAssetBalance(id: string, assetCode: string, assetIssuer: string): Promise<AssetBalance> {
+    if (!id || typeof id !== "string" || id.trim() === "") {
+      throw new StellarKitError("id is required and must be a non-empty string", 400, "ValidationError");
+    }
+    if (!assetCode || typeof assetCode !== "string" || assetCode.trim() === "") {
+      throw new StellarKitError("assetCode is required and must be a non-empty string", 400, "ValidationError");
+    }
+    if (!assetIssuer || typeof assetIssuer !== "string" || assetIssuer.trim() === "") {
+      throw new StellarKitError("assetIssuer is required and must be a non-empty string", 400, "ValidationError");
+    }
+    return this._get<AssetBalance>(
+      `/account/${id}/asset-balance/${encodeURIComponent(assetCode)}/${encodeURIComponent(assetIssuer)}`,
+    );
   }
 
   /**

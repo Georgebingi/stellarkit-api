@@ -8,9 +8,13 @@ const {
   makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
-const { validateAccountId, validateAssetCode, validateLimit, validateISODate } = require("../utils/validators");
-
 const cacheTTL = require("../config/cacheConfig");
+const {
+  validateAccountId,
+  validateAssetCode,
+  validateLimit,
+  validateISODate,
+} = require("../utils/validators");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
@@ -25,6 +29,7 @@ const { normalizeAsset, normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset, isNonNativeAsset } = require("../utils/assetHelpers");
 const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
+const { parseStellarAmount } = require("../utils/parseStellarAmount");
 const { formatAmount } = require("../utils/formatAmount");
 
 // Cache TTL for account endpoint responses (in seconds)
@@ -467,25 +472,23 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
     }
 
     const account = await server.loadAccount(id);
+    const normalizedAssetCode = assetCode.toUpperCase();
     const trustline = (account.balances || []).find(
       (b) =>
         isNonNativeAsset(b) &&
-        b.asset_code === assetCode &&
+        b.asset_code === normalizedAssetCode &&
         b.asset_issuer === assetIssuer
     );
 
     if (!trustline) {
-      const err = new Error(`Account ${id} does not hold asset ${assetCode}:${assetIssuer}`);
-      err.isAssetNotFound = true;
-      err.status = 404;
-      return next(err);
+      return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
     }
 
-    const assetType = assetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
+    const assetType = normalizedAssetCode.length > 4 ? "credit_alphanum12" : "credit_alphanum4";
 
     const data = {
       asset: {
-        code: assetCode,
+        code: normalizedAssetCode,
         issuer: assetIssuer,
         type: assetType,
       },
@@ -2998,8 +3001,6 @@ router.get("/:id/transaction-stats", async (req, res, next) => {
 
     const records = txResponse.records || [];
 
-    const STROOPS_PER_XLM = 10_000_000;
-
     const perAsset = new Map();
 
     for (const tx of records) {
@@ -3014,7 +3015,7 @@ router.get("/:id/transaction-stats", async (req, res, next) => {
       // Use Horizon-fee charged as a lightweight signal; for volume we do best-effort using tx.memo-less fields.
       // Since Horizon tx record does not directly expose sent/received amounts, we keep a minimal stats surface.
       const feeChargedStroops = parseInt(tx.fee_charged || 0, 10);
-      const feeChargedXlm = (feeChargedStroops / STROOPS_PER_XLM).toFixed(7);
+      const feeChargedXlm = parseStellarAmount(feeChargedStroops);
 
       const key = tx.type || "unknown";
       if (!perAsset.has(key)) {
@@ -3032,9 +3033,9 @@ router.get("/:id/transaction-stats", async (req, res, next) => {
       if (successful) bucket.successfulCount += 1;
       else bucket.failedCount += 1;
       bucket.totalFeeChargedStroops += feeChargedStroops;
-      bucket.totalFeeChargedXlm = (
-        bucket.totalFeeChargedStroops / STROOPS_PER_XLM
-      ).toFixed(7);
+      bucket.totalFeeChargedXlm = parseStellarAmount(
+        bucket.totalFeeChargedStroops
+      );
     }
 
     const successfulCount = records.filter((t) => t.successful === true).length;
@@ -3477,16 +3478,16 @@ router.get("/:id/min-balance", async (req, res, next) => {
         stroops: baseReserveStroops,
       },
       minimumBalance: {
-        xlm: (minimumBalanceStroops / 1e7).toFixed(7),
+        xlm: parseStellarAmount(minimumBalanceStroops),
         stroops: minimumBalanceStroops,
       },
       reserveBreakdown: {
         accountReserve: {
-          xlm: (accountReserveStroops / 1e7).toFixed(7),
+          xlm: parseStellarAmount(accountReserveStroops),
           stroops: accountReserveStroops,
         },
         subentryReserve: {
-          xlm: (subentryReserveStroops / 1e7).toFixed(7),
+          xlm: parseStellarAmount(subentryReserveStroops),
           stroops: subentryReserveStroops,
         },
       },
@@ -3789,7 +3790,6 @@ router.get("/:id/timeline", async (req, res, next) => {
  * - maturity: 'new' (<30 days), 'established' (30–364 days), or 'veteran' (≥365 days)
  * - createdAt: ISO 8601 timestamp of account creation
  * - createdAtLedger: Ledger sequence number of first funding transaction
- main
  *
  * @param {string} id - Stellar account public key (G...)
  *
@@ -3903,15 +3903,15 @@ router.get("/:id/transactions", async (req, res, next) => {
       }
     }
 
+    const includeOperations = req.query.includeOperations === true;
     const { limit, order, cursor } = parsePaginationParams(req.query, 200);
-    const STROOPS_PER_XLM = 10_000_000;
 
     // Helper to shape a Horizon transaction record into the API response format
-    function formatTx(tx) {
+    async function formatTx(tx) {
       const chargedInStroops = parseInt(tx.fee_charged, 10);
       const opCount = tx.operation_count || 1;
       const perOpStroops = Math.floor(chargedInStroops / opCount);
-      return {
+      const formatted = {
         id: tx.id,
         hash: tx.hash,
         ledger: typeof tx.ledger === "number" ? tx.ledger : tx.ledger_attr,
@@ -3919,16 +3919,16 @@ router.get("/:id/transactions", async (req, res, next) => {
         sourceAccount: tx.source_account,
         fee: {
           charged: tx.fee_charged,
-          chargedInXLM: (chargedInStroops / STROOPS_PER_XLM).toFixed(7),
+          chargedInXLM: parseStellarAmount(chargedInStroops),
           max: tx.max_fee,
-          maxInXLM: (parseInt(tx.max_fee, 10) / STROOPS_PER_XLM).toFixed(7),
+          maxInXLM: parseStellarAmount(parseInt(tx.max_fee, 10)),
           account: tx.fee_account,
         },
         feeSummary: {
           chargedInStroops,
-          chargedInXLM: (chargedInStroops / STROOPS_PER_XLM).toFixed(7),
+          chargedInXLM: parseStellarAmount(chargedInStroops),
           perOperationInStroops: perOpStroops,
-          perOperationInXLM: (perOpStroops / STROOPS_PER_XLM).toFixed(7),
+          perOperationInXLM: parseStellarAmount(perOpStroops),
         },
         operationCount: tx.operation_count,
         memoType: tx.memo_type,
@@ -3936,6 +3936,20 @@ router.get("/:id/transactions", async (req, res, next) => {
         successful: tx.successful,
         envelopeXdr: tx.envelope_xdr,
       };
+
+      if (includeOperations) {
+        try {
+          const opResponse = await server
+            .operations()
+            .forTransaction(tx.hash)
+            .call();
+          formatted.operations = (opResponse.records || []).map(normalizeOperation);
+        } catch (_) {
+          formatted.operations = [];
+        }
+      }
+
+      return formatted;
     }
 
     // When a ?type= filter is requested, fetch from the operations endpoint
@@ -3980,7 +3994,7 @@ router.get("/:id/transactions", async (req, res, next) => {
                 .transactions()
                 .transaction(op.transaction_hash)
                 .call();
-              return formatTx(tx);
+              return await formatTx(tx);
             } catch (_) {
               return null; // skip on individual lookup failure
             }
@@ -4013,7 +4027,7 @@ router.get("/:id/transactions", async (req, res, next) => {
     const records = txResponse.records || [];
 
     return success(res, {
-      items: records.map(formatTx),
+      items: await Promise.all(records.map(formatTx)),
       total: records.length,
       limit,
       cursor: records.length > 0 ? records[records.length - 1].paging_token : null,
