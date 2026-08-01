@@ -10,8 +10,8 @@ function isFreshRequest(query) {
   return query.fresh === true || query.fresh === "true";
 }
 
-const STROOPS_PER_XLM = 10_000_000;
-const STROOP_DECIMALS = 7;
+const { parseStellarAmount } = require("../utils/parseStellarAmount");
+
 const FEE_PERCENTILES_CACHE_TTL = 5;
 const PERCENTILE_LEVELS = [10, 20, 30, 50, 70, 90, 95, 99];
 const TX_FETCH_LIMIT = 100;
@@ -82,7 +82,7 @@ function computePercentile(sortedValues, percentile) {
 function buildFeeObject(stroops) {
   return {
     stroops,
-    xlm: (stroops / STROOPS_PER_XLM).toFixed(STROOP_DECIMALS),
+    xlm: parseStellarAmount(stroops),
   };
 }
 
@@ -193,7 +193,7 @@ router.get("/base-fee", async (req, res, next) => {
     const latestLedger = (ledgerResponse.records || [])[0] || {};
 
     const baseFeeStroops = parseInt(feeStats.last_ledger_base_fee, 10);
-    const baseFeeXLM = (baseFeeStroops / 1e7).toFixed(7);
+    const baseFeeXLM = parseStellarAmount(baseFeeStroops);
     const isSurge =
       parseFloat(feeStats.ledger_capacity_usage) > 0.5 ||
       baseFeeStroops > parseInt(feeStats.fee_charged.min, 10);
