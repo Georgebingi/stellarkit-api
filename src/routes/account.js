@@ -3665,14 +3665,15 @@ router.get("/:id/transactions", async (req, res, next) => {
       }
     }
 
+    const includeOperations = req.query.includeOperations === true;
     const { limit, order, cursor } = parsePaginationParams(req.query, 200);
 
     // Helper to shape a Horizon transaction record into the API response format
-    function formatTx(tx) {
+    async function formatTx(tx) {
       const chargedInStroops = parseInt(tx.fee_charged, 10);
       const opCount = tx.operation_count || 1;
       const perOpStroops = Math.floor(chargedInStroops / opCount);
-      return {
+      const formatted = {
         id: tx.id,
         hash: tx.hash,
         ledger: typeof tx.ledger === "number" ? tx.ledger : tx.ledger_attr,
@@ -3697,6 +3698,20 @@ router.get("/:id/transactions", async (req, res, next) => {
         successful: tx.successful,
         envelopeXdr: tx.envelope_xdr,
       };
+
+      if (includeOperations) {
+        try {
+          const opResponse = await server
+            .operations()
+            .forTransaction(tx.hash)
+            .call();
+          formatted.operations = (opResponse.records || []).map(normalizeOperation);
+        } catch (_) {
+          formatted.operations = [];
+        }
+      }
+
+      return formatted;
     }
 
     // When a ?type= filter is requested, fetch from the operations endpoint
@@ -3741,7 +3756,7 @@ router.get("/:id/transactions", async (req, res, next) => {
                 .transactions()
                 .transaction(op.transaction_hash)
                 .call();
-              return formatTx(tx);
+              return await formatTx(tx);
             } catch (_) {
               return null; // skip on individual lookup failure
             }
@@ -3774,7 +3789,7 @@ router.get("/:id/transactions", async (req, res, next) => {
     const records = txResponse.records || [];
 
     return success(res, {
-      items: records.map(formatTx),
+      items: await Promise.all(records.map(formatTx)),
       total: records.length,
       limit,
       cursor: records.length > 0 ? records[records.length - 1].paging_token : null,
