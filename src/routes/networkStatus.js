@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { server, horizonUrl, NETWORK } = require("../config/stellar");
 const { success, toISOTimestamp } = require("../utils/response");
+const { parseStellarAmount } = require("../utils/parseStellarAmount");
 const cacheService = require("../services/cache");
 
 const CACHE_TTL = 5; // seconds
@@ -49,9 +50,9 @@ router.get("/", async (req, res, next) => {
       },
       fees: {
         baseFeeInStroops: latest.base_fee_in_stroops,
-        baseFeeInXLM: (latest.base_fee_in_stroops / 1e7).toFixed(7),
+        baseFeeInXLM: parseStellarAmount(latest.base_fee_in_stroops),
         basereserveInStroops: latest.base_reserve_in_stroops,
-        baseReserveInXLM: (latest.base_reserve_in_stroops / 1e7).toFixed(7),
+        baseReserveInXLM: parseStellarAmount(latest.base_reserve_in_stroops),
       },
       protocol: {
         version: latest.protocol_version,
