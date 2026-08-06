@@ -268,13 +268,20 @@ function validateAsset(code, issuer) {
  *   validateCursor(req.query.cursor);
  * }
  */
+const CURSOR_PATTERN = /^[A-Za-z0-9-]+$/;
+
 function validateCursor(cursor) {
-  if (cursor === null || cursor === undefined || typeof cursor !== "string" || cursor.trim() === "") {
+  if (
+    cursor === null ||
+    cursor === undefined ||
+    typeof cursor !== "string" ||
+    cursor.trim() === "" ||
+    !CURSOR_PATTERN.test(cursor)
+  ) {
     const err = new Error("The provided cursor value is invalid.");
     err.isInvalidCursor = true;
     err.type = "InvalidCursor";
-    err.suggestion =
-      "Use the cursor value returned in the previous response's data.cursor field.";
+    err.suggestion = "Use the cursor returned in the previous response.";
     err.status = 400;
     throw err;
   }
