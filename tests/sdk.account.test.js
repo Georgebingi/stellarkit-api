@@ -666,7 +666,8 @@ describe("AccountModule", () => {
     });
   });
 
-  // ── API key forwarding ─────────────────────────────────────────────────────  describe("API key header", () => {
+  // ── API key forwarding ─────────────────────────────────────────────────────
+  describe("API key header", () => {
     it("sends X-API-Key header when apiKey is provided", async () => {
       const m = new AccountModule({ baseUrl: BASE_URL, apiKey: "test-key" });
       mockFetch(200, { success: true, data: ACCOUNT_DATA });
