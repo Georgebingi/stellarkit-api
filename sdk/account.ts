@@ -84,6 +84,34 @@ export interface AssetRef {
 }
 
 /**
+ * A single balance entry returned by `AccountModule.getBalances`.
+ *
+ * Each entry represents one asset the account holds (native XLM or a
+ * non-native token), using the standard `AssetRef` shape for the asset
+ * identifier fields.
+ */
+export interface Balance {
+  /** Normalised asset identifier following the standard Asset interface. */
+  asset: AssetRef;
+  /** Current balance as a seven-decimal string (e.g. "9.9999800"). */
+  balance: string;
+  /** Amount reserved for buying liabilities. */
+  buyingLiabilities: string;
+  /** Amount reserved for selling liabilities. */
+  sellingLiabilities: string;
+  /**
+   * Trustline limit as a seven-decimal string.
+   * `null` for native XLM (no trustline limit applies).
+   */
+  limit: string | null;
+  /**
+   * Whether the trustline is authorized by the issuer.
+   * `null` for native XLM (authorization does not apply).
+   */
+  isAuthorized: boolean | null;
+}
+
+/**
  * Balance for a specific asset trustline returned by
  * GET /account/:id/asset-balance/:assetCode/:assetIssuer.
  */
@@ -276,14 +304,77 @@ export class AccountModule {
   }
 
   /**
-   * Get only the XLM and asset balances for an account.
+   * Get all balances for an account as a typed `Balance[]` array.
    *
-   * @param id - Stellar account public key.
-   * @returns Resolves to the balances payload.
-   * @throws {StellarKitError} On non-2xx response.
+   * Calls `GET /account/:id/balances` and normalises the response into a flat
+   * array where each entry — native XLM or a non-native asset — follows the
+   * standard `AssetRef` shape for asset identifier fields.
+   *
+   * @param id - Stellar account public key (non-empty string).
+   * @returns Resolves to a `Balance[]` array with one entry per held asset.
+   * @throws {StellarKitError} If `id` is missing/empty.
+   * @throws {StellarKitError} With `type: "AccountNotFound"` when the account does not exist (404).
+   * @throws {StellarKitError} On any other non-2xx API response.
+   *
+   * @example
+   * const account = new AccountModule({ baseUrl: "http://localhost:3000" });
+   * const balances = await account.getBalances("GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN");
+   * const xlm = balances.find(b => b.asset.type === "native");
+   * console.log(xlm?.balance); // "9.9999800"
    */
-  async getBalances(id: string): Promise<AccountBalancesResponse["data"]> {
-    return this._get<AccountBalancesResponse["data"]>(`/account/${id}/balances`);
+  async getBalances(id: string): Promise<Balance[]> {
+    if (!id || typeof id !== "string" || id.trim() === "") {
+      throw new StellarKitError("id is required and must be a non-empty string", 400, "ValidationError");
+    }
+
+    const url = `${this.baseUrl}/account/${id}/balances`;
+    const res = await fetch(url, { headers: this.headers });
+    const body = await res.json();
+
+    if (!res.ok) {
+      // Map 404 to AccountNotFound per the acceptance criteria
+      const type = res.status === 404
+        ? "AccountNotFound"
+        : (body?.error?.type ?? "ApiError");
+      throw new StellarKitError(
+        body?.error?.message ?? res.statusText,
+        res.status,
+        type,
+      );
+    }
+
+    const data = (body as { data: AccountBalancesResponse["data"] }).data;
+
+    // Normalise the { xlm, assets } response shape into a flat Balance[] array
+    const balances: Balance[] = [];
+
+    // Native XLM entry
+    balances.push({
+      asset: { code: "XLM", issuer: null, type: "native" },
+      balance: data.xlm.balance,
+      buyingLiabilities: data.xlm.buyingLiabilities,
+      sellingLiabilities: data.xlm.sellingLiabilities,
+      limit: null,
+      isAuthorized: null,
+    });
+
+    // Non-native asset entries
+    for (const asset of data.assets) {
+      balances.push({
+        asset: {
+          code: asset.assetCode,
+          issuer: asset.assetIssuer,
+          type: asset.assetType,
+        },
+        balance: asset.balance,
+        buyingLiabilities: asset.buyingLiabilities,
+        sellingLiabilities: asset.sellingLiabilities,
+        limit: asset.limit,
+        isAuthorized: asset.isAuthorized,
+      });
+    }
+
+    return balances;
   }
 
   /**
