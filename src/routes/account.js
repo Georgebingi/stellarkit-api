@@ -1094,6 +1094,23 @@ router.get("/:id/payments", async (req, res, next) => {
 
 /**
  * GET /account/:id/trades
+ *
+ * Returns a normalised, paginated list of trades executed by the account.
+ *
+ * Query params:
+ *   - limit, order, cursor       — standard pagination
+ *   - startDate, endDate         — optional ISO 8601 range filter on ledgerCloseTime
+ *   - fresh (boolean)            — bypasses the cache when set to "true"
+ *
+ * Each entry includes tradeId, ledgerCloseTime, selling, buying, soldAmount,
+ * boughtAmount, price, and offerId (per the account's side of the trade),
+ * alongside the raw base/counter fields for backward compatibility.
+ * Asset fields follow the standard { code, issuer, type } shape, and
+ * soldAmount/boughtAmount/price are seven-decimal strings.
+ *
+ * Returns:
+ *   - 200: { success: true, data: { trades, items, total, limit, cursor } }
+ *   - 404: Account does not exist
  */
 router.get("/:id/trades", async (req, res, next) => {
   try {
@@ -1151,28 +1168,60 @@ router.get("/:id/trades", async (req, res, next) => {
         if (endDate && t > endDate) return false;
         return true;
       })
-      .map((trade) => ({
-      id: trade.id,
-      pagingToken: trade.paging_token,
-      ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
-      offerId: trade.offer_id,
-      tradeType: trade.base_is_seller ? "sell" : "buy",
-      baseAccount: trade.base_account,
-      baseAmount: trade.base_amount,
-      baseAsset: normalizeAsset(trade.base_asset_code, trade.base_asset_issuer, trade.base_asset_type),
-      counterAccount: trade.counter_account,
-      counterAmount: trade.counter_amount,
-      counterAsset: normalizeAsset(trade.counter_asset_code, trade.counter_asset_issuer, trade.counter_asset_type),
-      priceNumerator: trade.price?.n || null,
-      priceDenominator: trade.price?.d || null,
-      baseIsSeller: trade.base_is_seller === true,
-    }));
+      .map((trade) => {
+        const baseAsset = normalizeAsset(trade.base_asset_code, trade.base_asset_issuer, trade.base_asset_type);
+        const counterAsset = normalizeAsset(trade.counter_asset_code, trade.counter_asset_issuer, trade.counter_asset_type);
+        const baseIsSeller = trade.base_is_seller === true;
+
+        // Determine what the queried account (id) sold/bought on this trade.
+        // The seller (whichever account base_is_seller points to) always sold
+        // base_amount of base_asset and received counter_amount of counter_asset;
+        // the buyer always sold counter_amount of counter_asset and received
+        // base_amount of base_asset — regardless of whether id is base_account
+        // or counter_account.
+        const isIdBase = trade.base_account === id;
+        const idIsSeller = isIdBase === baseIsSeller;
+
+        const selling = idIsSeller ? baseAsset : counterAsset;
+        const soldAmount = formatAmount(idIsSeller ? trade.base_amount : trade.counter_amount);
+        const buying = idIsSeller ? counterAsset : baseAsset;
+        const boughtAmount = formatAmount(idIsSeller ? trade.counter_amount : trade.base_amount);
+
+        const price =
+          trade.price && trade.price.d && Number(trade.price.d) !== 0
+            ? (Number(trade.price.n) / Number(trade.price.d)).toFixed(7)
+            : formatAmount(trade.price || "0");
+
+        return {
+          id: trade.id,
+          tradeId: trade.id,
+          pagingToken: trade.paging_token,
+          ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
+          offerId: trade.offer_id,
+          tradeType: baseIsSeller ? "sell" : "buy",
+          baseAccount: trade.base_account,
+          baseAmount: trade.base_amount,
+          baseAsset,
+          counterAccount: trade.counter_account,
+          counterAmount: trade.counter_amount,
+          counterAsset,
+          priceNumerator: trade.price?.n || null,
+          priceDenominator: trade.price?.d || null,
+          baseIsSeller,
+          selling,
+          buying,
+          soldAmount,
+          boughtAmount,
+          price,
+        };
+      });
 
     const nextCursor = records.length
       ? records[records.length - 1].paging_token || null
       : null;
 
     const data = {
+      trades,
       items: trades,
       total: trades.length,
       limit,
