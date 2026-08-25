@@ -4,7 +4,6 @@ const { server, NETWORK, fetchAccountCreation } = require("../config/stellar");
 const { success, toISOTimestamp } = require("../utils/response");
 const {
   makeAccountNotFoundError,
-  makeClaimableBalanceNotFoundError,
   makeTrustlineNotFoundError,
 } = require("../utils/errors");
 const cacheService = require("../services/cache");
@@ -15,6 +14,7 @@ const {
   validateLimit,
   validateISODate,
 } = require("../utils/validators");
+const { validateEffectType } = require("../utils/effectTypes");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
@@ -1622,17 +1622,33 @@ router.get("/:id/analytics", async (req, res, next) => {
 
 /**
  * GET /account/:id — full account details
+ *
+ * Fetches live account data from Horizon via server.loadAccount(id) and maps
+ * the raw response to the StellarKit normalised shape, including:
+ *   - balances (xlm + non-native assets)
+ *   - signers with normalised type strings
+ *   - camelCase thresholds and boolean flags
+ *   - sequence number and subentry count
+ *   - reserve breakdown in both XLM and stroops
+ *
+ * Returns 404 when the account does not exist on the configured network.
+ *
+ * Query params:
+ *   - fresh (boolean, default: false) — bypasses the cache when set to "true"
+ *
+ * Response headers:
+ *   - X-Cache: HIT  — served from cache
+ *   - X-Cache: MISS — fetched live from Horizon and cached
  */
 router.get("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    res.set("X-Cache", "MISS");
     validateAccountId(id);
 
     const cacheKey = `account:${id}`;
     const fresh = req.query.fresh === "true";
 
-    // Check cache first (unless fresh=true)
+    // Serve from cache unless caller requests a fresh fetch
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
       if (cached) {
@@ -1641,37 +1657,68 @@ router.get("/:id", async (req, res, next) => {
       }
     }
 
+    // Fetch live account data from Horizon
     const account = await server.loadAccount(id);
 
-    const baseReserve = 0.5;
+    // --- Balances -----------------------------------------------------------
+    // formatAccountBalances splits balances into the native XLM entry and
+    // all non-native asset trustlines, applying formatBalance() to each amount.
+    const { xlm, assets } = formatAccountBalances(account);
+
+    // Raw XLM balance string needed for the spendable reserve calculation.
+    const xlmNativeEntry = (account.balances || []).find((b) => isNativeAsset(b));
+    const rawXlmBalance = parseFloat(xlmNativeEntry?.balance || "0");
+
+    // --- Reserve breakdown --------------------------------------------------
+    const baseReserve = 0.5; // 0.5 XLM per base reserve unit (protocol constant)
     const STROOPS_PER_XLM = 10_000_000;
     const accountReserve = 2 * baseReserve;
     const subentryReserve = (account.subentry_count || 0) * baseReserve;
     const totalLocked = accountReserve + subentryReserve;
 
-    const toXLM = (xlm) => xlm.toFixed(7);
-    const toStroops = (xlm) => Math.round(xlm * STROOPS_PER_XLM);
+    const toXLM = (xlmVal) => xlmVal.toFixed(7);
+    const toStroops = (xlmVal) => Math.round(xlmVal * STROOPS_PER_XLM);
+
+    // --- Signers ------------------------------------------------------------
+    // Normalise every signer type to a canonical string value and always
+    // include sponsoredBy (null when absent) for a consistent shape.
+    const signers = (account.signers || []).map((s) => ({
+      key: s.key,
+      weight: Number(s.weight) || 0,
+      type: normalizeSignerType(s.type),
+      sponsoredBy: s.sponsor || s.sponsored_by || null,
+    }));
+
+    // --- Thresholds ---------------------------------------------------------
+    // Map Horizon snake_case threshold keys to camelCase for consistency with
+    // the rest of the StellarKit response surface.
+    const thresholds = {
+      lowThreshold: account.thresholds?.low_threshold ?? 0,
+      medThreshold: account.thresholds?.med_threshold ?? 0,
+      highThreshold: account.thresholds?.high_threshold ?? 0,
+    };
+
+    // --- Flags --------------------------------------------------------------
+    // Horizon returns booleans under snake_case keys; map to camelCase and
+    // ensure every flag is always present (false when absent from Horizon).
+    const rawFlags = account.flags || {};
+    const flags = {
+      authRequired: rawFlags.auth_required === true,
+      authRevocable: rawFlags.auth_revocable === true,
+      authImmutable: rawFlags.auth_immutable === true,
+      clawbackEnabled: rawFlags.auth_clawback_enabled === true,
+    };
 
     const data = {
       accountId: account.id,
       sequence: account.sequence,
       subentryCount: account.subentry_count,
-      xlm: {
-        balance: xlmBalance
-          ? formatBalance(xlmBalance.balance)
-          : formatBalance("0.0000000"),
-        buyingLiabilities: xlmBalance
-          ? formatBalance(xlmBalance.buying_liabilities)
-          : formatBalance("0"),
-        sellingLiabilities: xlmBalance
-          ? formatBalance(xlmBalance.selling_liabilities)
-          : formatBalance("0"),
-      },
+      xlm,
       assets,
       assetCount: assets.length,
-      signers: account.signers,
-      thresholds: account.thresholds,
-      flags: account.flags,
+      signers,
+      thresholds,
+      flags,
       homeDomain: account.home_domain || null,
       lastModifiedLedger: account.last_modified_ledger,
       reserveBreakdown: {
@@ -1692,15 +1739,13 @@ router.get("/:id", async (req, res, next) => {
           stroops: toStroops(totalLocked),
         },
         spendable: {
-          xlm: toXLM(parseFloat(xlmBalance?.balance || "0") - totalLocked),
-          stroops: toStroops(
-            parseFloat(xlmBalance?.balance || "0") - totalLocked,
-          ),
+          xlm: toXLM(rawXlmBalance - totalLocked),
+          stroops: toStroops(rawXlmBalance - totalLocked),
         },
       },
     };
 
-    // Cache the response
+    // Cache the normalised response
     cacheService.set(cacheKey, data, CACHE_TTL_ACCOUNT);
 
     res.set("X-Cache", "MISS");
