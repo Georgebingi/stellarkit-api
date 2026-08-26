@@ -492,11 +492,12 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
         issuer: assetIssuer,
         type: assetType,
       },
-      balance: trustline.balance,
-      limit: trustline.limit,
-      buyingLiabilities: trustline.buying_liabilities,
-      sellingLiabilities: trustline.selling_liabilities,
-      isAuthorized: trustline.is_authorized,
+      balance: toSevenDecimalString(trustline.balance),
+      limit: toSevenDecimalString(trustline.limit),
+      buyingLiabilities: toSevenDecimalString(trustline.buying_liabilities || "0"),
+      sellingLiabilities: toSevenDecimalString(trustline.selling_liabilities || "0"),
+      isAuthorized: trustline.is_authorized === true,
+      isAuthorizedToMaintainLiabilities: trustline.is_authorized_to_maintain_liabilities === true,
     };
 
     cacheService.set(cacheKey, data, cacheTTL.assetBalance);
