@@ -7,7 +7,7 @@
  * env configuration.
  *
  * Environment variables (all in milliseconds):
- *   CACHE_TTL_NETWORK_STATUS_MS  — /network-status            (default: 5 000 ms)
+ *   CACHE_TTL_NETWORK_STATUS_MS  — /network-status            (default: 10 000 ms)
  *   CACHE_TTL_FEE_ESTIMATE_MS    — /fee-estimate & surge-status (default: 5 000 ms)
  *   CACHE_TTL_BASE_FEE_MS        — /network/base-fee          (default: 5 000 ms)
  *   CACHE_TTL_VALIDATORS_MS      — /network/validators        (default: 300 000 ms)
@@ -33,10 +33,10 @@ function msToSeconds(ms, defaultMs) {
 const globalFallbackMs = parseInt(process.env.CACHE_TTL_MS, 10) || 5000;
 
 const cacheTTL = {
-  /** /network-status — one ledger close interval */
+  /** /network-status — live Horizon root payload, 10 s default */
   networkStatus: msToSeconds(
     process.env.CACHE_TTL_NETWORK_STATUS_MS,
-    globalFallbackMs
+    parseInt(process.env.CACHE_TTL_MS, 10) || 10000
   ),
 
   /** /fee-estimate and /fee-estimate/surge-status */

@@ -8,10 +8,14 @@ const compression = require("compression");
 const logger = require("./utils/logger");
 const { parseStellarAmount } = require("./utils/parseStellarAmount");
 const { setupWebSocket } = require("./websocket");
-const { server } = require("./config/stellar");
+const { server, horizonUrl, NETWORK } = require("./config/stellar");
 const cacheService = require("./services/cache");
 const networkStatusCache = cacheService;
 const feeEstimateCache = cacheService;
+const { fetchNetworkStatus } = require("./utils/mapNetworkStatus");
+const { mapFeeStats } = require("./utils/mapFeeEstimate");
+const { getHorizonHealth } = require("./utils/horizonHealth");
+const cacheTTL = require("./config/cacheConfig");
 
 const rateLimiter = require("./middleware/rateLimiter");
 const contentTypeValidator = require("./middleware/contentTypeValidator");
@@ -41,11 +45,9 @@ const stellarTomlRouter = require("./routes/stellarToml");
 const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
 const metricsRouter = require("./routes/metrics");
-const webhooksRouter = require("./routes/webhooks");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
-const webhooksRouter = require("./routes/webhooks");
 
 const app = express();
 // Disable server identification header for security
@@ -61,33 +63,17 @@ async function warmNetworkStatusCache({
   logger: customLogger = logger,
   horizonServer = server,
 } = {}) {
-  const ledger = await horizonServer.ledgers().order("desc").limit(1).call();
-  const latest = ledger.records[0];
+  const data = await fetchNetworkStatus(horizonServer, {
+    network: process.env.STELLAR_NETWORK || NETWORK || "testnet",
+    horizonUrl,
+  });
 
-  const data = {
-    network: process.env.STELLAR_NETWORK || "testnet",
-    horizonUrl: require("./config/stellar").horizonUrl,
-    latestLedger: {
-      sequence: latest.sequence,
-      closedAt: latest.closed_at,
-      transactionCount: latest.successful_transaction_count,
-      operationCount: latest.operation_count,
-      totalCoins: latest.total_coins,
-      feePool: latest.fee_pool,
-    },
-    fees: {
-      baseFeeInStroops: latest.base_fee_in_stroops,
-      baseFeeInXLM: parseStellarAmount(latest.base_fee_in_stroops),
-      basereserveInStroops: latest.base_reserve_in_stroops,
-      baseReserveInXLM: parseStellarAmount(latest.base_reserve_in_stroops),
-    },
-    protocol: {
-      version: latest.protocol_version,
-    },
-  };
-
-  cacheService.set("network-status", data);
-  customLogger.info("[CACHE WARM] /network-status");
+  cacheService.set("network-status", data, cacheTTL.networkStatus);
+  const writeWarmLog =
+    typeof customLogger.info === "function"
+      ? customLogger.info.bind(customLogger)
+      : customLogger.log.bind(customLogger);
+  writeWarmLog("[CACHE WARM] /network-status");
 }
 
 async function warmFeeEstimateCache({
@@ -97,11 +83,12 @@ async function warmFeeEstimateCache({
   const feeStats = await horizonServer.feeStats();
   const operations = 1;
 
-  const base = parseInt(feeStats.fee_charged.p10);
   const recommended = parseInt(feeStats.fee_charged.p50);
   const priority = parseInt(feeStats.fee_charged.p95);
+  const liveFees = mapFeeStats(feeStats);
 
   const data = {
+    ...liveFees,
     note: `Fee estimates for a transaction with ${operations} operation(s). Fees are in stroops (1 XLM = 10,000,000 stroops).`,
     operationCount: operations,
     perOperation: {
@@ -146,8 +133,12 @@ async function warmFeeEstimateCache({
     },
   };
 
-  cacheService.set("fee-estimate:1", data);
-  customLogger.info("[CACHE WARM] /fee-estimate");
+  cacheService.set("fee-estimate:1", data, cacheTTL.feeEstimate);
+  const writeWarmLog =
+    typeof customLogger.info === "function"
+      ? customLogger.info.bind(customLogger)
+      : customLogger.log.bind(customLogger);
+  writeWarmLog("[CACHE WARM] /fee-estimate");
 }
 
 async function warmStartupCaches({
@@ -202,18 +193,23 @@ app.use((req, res, next) => {
 });
 
 // ── Health Check ────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => {
+app.get("/health", async (req, res) => {
+  const network = process.env.STELLAR_NETWORK || NETWORK || "testnet";
+  const horizon = await getHorizonHealth({ server, network });
+  const status = horizon.status === "ok" ? "ok" : horizon.status;
+
   res.json({
     success: true,
     data: {
-      status: "ok",
+      status,
       service: "StellarKit API",
       version: require("../package.json").version,
       timestamp: new Date().toISOString(),
-      network: process.env.STELLAR_NETWORK || "testnet",
+      network,
       uptimeSeconds: Math.floor(process.uptime()),
       nodeVersion: process.version,
       startedAt: SERVER_STARTED_AT,
+      horizon,
     },
   });
 });

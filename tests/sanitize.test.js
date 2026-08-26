@@ -1,7 +1,15 @@
 const request = require("supertest");
 const app = require("../src/index");
+const { server } = require("../src/config/stellar");
 
 describe("Sanitize Middleware", () => {
+  beforeEach(() => {
+    jest.spyOn(server, "serverInfo").mockResolvedValue({ horizon_version: "2.33.0" });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
   describe("Whitespace trimming", () => {
     it("trims leading and trailing whitespace from query params", async () => {
       const res = await request(app).get("/utils/validate-account?id=%20GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN%20");

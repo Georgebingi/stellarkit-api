@@ -51,6 +51,7 @@ const { getAssetMetadataFromToml } = require("../utils/tomlResolver");
 const { formatBalance } = require("../utils/formatBalance");
 const { parseStellarAmount } = require("../utils/parseStellarAmount");
 const { formatAmount } = require("../utils/formatAmount");
+const { mapAccountTrade } = require("../utils/mapAccountTrade");
 
 // Cache TTL for account endpoint responses (in seconds)
 const CACHE_TTL_ACCOUNT = parseInt(process.env.CACHE_TTL_ACCOUNT_MS, 10) / 1000 || 10;
@@ -1289,36 +1290,7 @@ router.get("/:id/trades", async (req, res, next) => {
         if (endDate && t > endDate) return false;
         return true;
       })
-      .map((trade) => {
-        const priceN = trade.price?.n;
-        const priceD = trade.price?.d;
-        const price =
-          priceN != null && priceD != null && Number(priceD) !== 0
-            ? toSevenDecimalString(Number(priceN) / Number(priceD))
-            : "0.0000000";
-        return {
-          id: trade.id,
-          pagingToken: trade.paging_token,
-          ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
-          offerId: trade.offer_id,
-          tradeType: trade.base_is_seller ? "sell" : "buy",
-          baseAccount: trade.base_account,
-          baseAmount: toSevenDecimalString(trade.base_amount),
-          baseAsset: normalizeAsset(
-            trade.base_asset_code,
-            trade.base_asset_issuer,
-            trade.base_asset_type,
-          ),
-          counterAccount: trade.counter_account,
-          counterAmount: toSevenDecimalString(trade.counter_amount),
-          counterAsset: normalizeAsset(
-            trade.counter_asset_code,
-            trade.counter_asset_issuer,
-            trade.counter_asset_type,
-          ),
-          price,
-        };
-      });
+      .map((trade) => mapAccountTrade(trade, id));
 
     const nextCursor = records.length
       ? records[records.length - 1].paging_token || null
