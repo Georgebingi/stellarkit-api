@@ -1417,19 +1417,17 @@ router.get("/:id/claimable-balances", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const includeExpired = req.query.includeExpired === "true";
-    const cacheKey = `claimable-balances:${id}:${includeExpired}`;
+    const { limit, order, cursor } = parsePaginationParams(req.query, 200);
     const fresh = req.query.fresh === "true";
+    const cacheKey = `claimable-balances:${id}:${limit}:${cursor || ""}:${order}`;
 
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
       if (cached) {
         res.set("X-Cache", "HIT");
-        return success(res, cached);
+        return success(res, cached.balances, { meta: cached.meta });
       }
     }
-
-    const { limit, order, cursor } = parsePaginationParams(req.query);
 
     let query = server.claimableBalances().forClaimant(id).limit(limit).order(order);
     if (cursor) query = query.cursor(cursor);
@@ -1437,120 +1435,25 @@ router.get("/:id/claimable-balances", async (req, res, next) => {
     const response = await query.call();
     const records = response.records || [];
 
-    const nowSeconds = Math.floor(Date.now() / 1000);
+    // Normalize each balance using the standard shape
+    const balances = records.map(normalizeClaimableBalance);
 
-    function evaluatePredicate(predicate) {
-      if (predicate.unconditional) {
-        return {
-          canClaim: true,
-          reason: "The balance is claimable unconditionally.",
-        };
-      }
+    const lastRecord = records[records.length - 1];
+    const nextCursor = lastRecord ? lastRecord.paging_token : null;
+    const hasMore = records.length > limit;
 
-      if (predicate.not) {
-        const res = evaluatePredicate(predicate.not);
-        return { canClaim: !res.canClaim, reason: `NOT (${res.reason})` };
-      }
-
-      if (predicate.and) {
-        const results = predicate.and.map((p) => evaluatePredicate(p));
-        const canClaim = results.every((r) => r.canClaim);
-        return {
-          canClaim,
-          reason: canClaim ? `All conditions met` : `Some conditions failed`,
-        };
-      }
-
-      if (predicate.or) {
-        const results = predicate.or.map((p) => evaluatePredicate(p));
-        const canClaim = results.some((r) => r.canClaim);
-        return {
-          canClaim,
-          reason: canClaim ? `At least one condition met` : `No conditions met`,
-        };
-      }
-
-      if (predicate.abs_before) {
-        const deadline = Math.floor(
-          new Date(predicate.abs_before).getTime() / 1000,
-        );
-        const canClaim = nowSeconds < deadline;
-        return {
-          canClaim,
-          reason: canClaim
-            ? `Before deadline ${predicate.abs_before}`
-            : `Deadline passed`,
-        };
-      }
-
-      if (predicate.abs_after) {
-        const startTime = Math.floor(
-          new Date(predicate.abs_after).getTime() / 1000,
-        );
-        const canClaim = nowSeconds >= startTime;
-        return {
-          canClaim,
-          reason: canClaim
-            ? `After start time ${predicate.abs_after}`
-            : `Not yet started`,
-        };
-      }
-
-      return { canClaim: false, reason: "Unknown predicate type" };
-    }
-
-    const claimable = [];
-    const notYetClaimable = [];
-    const expired = [];
-
-    for (const balance of records) {
-      const claimant = balance.claimants.find((c) => c.destination === id);
-      if (!claimant) continue;
-
-      const evaluation = evaluatePredicate(claimant.predicate);
-
-      const isExpired = evaluation.reason.includes("Deadline passed");
-
-      const balanceEntry = {
-        id: balance.id,
-        asset: normalizeAssetFromString(balance.asset),
-        amount: balance.amount,
-        sponsor: balance.sponsor || null,
-        lastModifiedLedger: balance.last_modified_ledger,
-        predicate: claimant.predicate,
-        claimability: evaluation.reason,
-        isExpired,
-      };
-
-      if (evaluation.canClaim) {
-        claimable.push(balanceEntry);
-      } else if (isExpired) {
-        if (includeExpired) expired.push(balanceEntry);
-      } else if (evaluation.reason.includes("Not yet started")) {
-        notYetClaimable.push(balanceEntry);
-      } else {
-        notYetClaimable.push(balanceEntry);
-      }
-    }
-
-    const nextCursor =
-      records.length === limit
-        ? records[records.length - 1]?.paging_token || null
-        : null;
-
-    const data = {
-      eligible: claimable,
-      notYetClaimable,
-      expired,
-      total: records.length,
+    const meta = {
+      count: balances.length,
       limit,
-      cursor: nextCursor,
+      order,
+      nextCursor,
+      hasMore,
     };
 
-    cacheService.set(cacheKey, data, cacheTTL.claimableBalances);
+    cacheService.set(cacheKey, { balances, meta }, cacheTTL.claimableBalances);
 
     res.set("X-Cache", "MISS");
-    return success(res, data);
+    return success(res, balances, { meta });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
   }
@@ -2820,33 +2723,6 @@ router.get("/:id/offer-history", async (req, res, next) => {
     });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
-  }
-});
-
-/**
- * GET /account/:id/claimable-balances
- */
-router.get("/:id/claimable-balances", async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    validateAccountId(id);
-
-    const { limit, order, cursor } = parsePaginationParams(req.query, 200);
-
-    let query = server.claimableBalances().forClaimant(id).limit(limit).order(order);
-    if (cursor) query = query.cursor(cursor);
-
-    const balancesResponse = await query.call();
-    const records = balancesResponse.records || [];
-    const balances = records.map(normalizeClaimableBalance);
-    const lastRecord = records[records.length - 1];
-    const nextCursor = lastRecord ? lastRecord.paging_token : null;
-
-    return success(res, balances, {
-      meta: { count: balances.length, limit, order, nextCursor, hasMore: records.length === limit },
-    });
-  } catch (err) {
-    handleAccountNotFound(err, next);
   }
 });
 
