@@ -14,6 +14,7 @@ const { makeAssetNotFoundError, makeAccountNotFoundError, makeTomlFetchFailedErr
 const cacheTTL = require("../config/cacheConfig");
 const { normalizeAsset } = require("../utils/asset");
 const { fetchNormalisedToml } = require("../utils/tomlResolver");
+const { isNativeAsset } = require("../utils/assetHelpers");
 router.use(normalizeAssetCode);
 
 const DEFAULT_ASSET_HOLDERS_CACHE_TTL_MS = 30000;
@@ -54,9 +55,7 @@ function formatAssetHolder(account, assetCode, issuer) {
 }
 
 function getNativeBalance(account) {
-  const native = (account.balances || []).find(
-    (b) => b.asset_type === "native",
-  );
+  const native = (account.balances || []).find((b) => isNativeAsset(b));
   return native ? parseFloat(native.balance) : 0;
 }
 
