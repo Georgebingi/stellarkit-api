@@ -651,11 +651,10 @@ export class AccountModule {
     if (!id || typeof id !== "string" || id.trim() === "") {
       throw new StellarKitError("id is required and must be a non-empty string", 400, "ValidationError");
     }
-    const params: Record<string, string | number | undefined> = {
-      limit: options?.limit,
-      cursor: options?.cursor,
-      type: options?.type,
-    };
+    const params: Record<string, string | number | undefined> = {};
+    if (options?.limit !== undefined) params.limit = options.limit;
+    if (options?.cursor) params.cursor = options.cursor;
+    if (options?.type) params.type = options.type;
     return this._get<PaginatedResponse<Effect>>(`/account/${id}/effects`, params);
   }
 }

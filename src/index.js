@@ -14,6 +14,7 @@ const networkStatusCache = cacheService;
 const feeEstimateCache = cacheService;
 
 const rateLimiter = require("./middleware/rateLimiter");
+const restrictHttpMethods = require("./middleware/restrictHttpMethods");
 const contentTypeValidator = require("./middleware/contentTypeValidator");
 const bodySizeLimit = require("./middleware/bodySizeLimit");
 const errorHandler = require("./middleware/errorHandler");
@@ -174,6 +175,8 @@ async function warmStartupCaches({
 
 // ── Security & Parsing ──────────────────────────────────────────────────────
 app.use(helmet());
+// Reject TRACE/CONNECT/OPTIONS/PUT/HEAD/etc. before CORS or route handlers
+app.use(restrictHttpMethods);
 // Skip compression for responses smaller than 1 KB — gzip headers alone can exceed tiny payloads
 app.use(compression({ threshold: 1024 }));
 app.use(cors());
