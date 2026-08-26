@@ -17,7 +17,26 @@ const {
 const { validateEffectType } = require("../utils/effectTypes");
 const { accountSummaryRateLimiter } = require("../middleware/rateLimiter");
 const registerParamValidation = require("../middleware/validateRouteParams");
+const { startHorizonTimer, stopHorizonTimer } = require("../middleware/requestLogger");
 registerParamValidation(router);
+
+/**
+ * Calls a Horizon-backed async function and records the duration on req
+ * so the request logger can include horizonResponseTimeMs in the log entry.
+ *
+ * @template T
+ * @param {import('express').Request} req
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withHorizonTiming(req, fn) {
+  startHorizonTimer(req);
+  try {
+    return await fn();
+  } finally {
+    stopHorizonTimer(req);
+  }
+}
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
 const { parsePaginationParams } = require("../utils/pagination");
@@ -297,7 +316,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
       }
     }
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     const issuerCache = new Map();
     const tomlCache = new Map();
@@ -356,7 +375,7 @@ router.get("/:id/balances", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const formatted = formatAccountBalances(account);
 
     const assetsFilter = req.query.assets;
@@ -409,7 +428,7 @@ router.get("/:id/native-balance", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const xlmBalance = (account.balances || []).find(
       (b) => isNativeAsset(b),
     );
@@ -471,7 +490,7 @@ router.get("/:id/asset-balance/:assetCode/:assetIssuer", async (req, res, next) 
       }
     }
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const normalizedAssetCode = assetCode.toUpperCase();
     const trustline = (account.balances || []).find(
       (b) =>
@@ -542,7 +561,7 @@ router.get("/:id/sequence", async (req, res, next) => {
       }
     }
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     const data = {
       accountId: account.id,
@@ -566,7 +585,7 @@ router.get("/:id/signing-keys", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     return success(res, normalizeSigningKeysResponse(account));
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
@@ -592,7 +611,7 @@ router.get("/:id/multisig-info", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     // Normalise every signer: camelCase fields, human-readable type,
     // and sponsoredBy always present (string or null — never omitted).
@@ -648,7 +667,7 @@ router.get("/:id/effects", async (req, res, next) => {
     const { limit, cursor } = parsePaginationParams(req.query, 200);
 
     // Ensure account exists for proper 404s
-    await server.loadAccount(id);
+    await withHorizonTiming(req, () => server.loadAccount(id));
 
     let query = server.effects().forAccount(id).limit(limit).order("desc");
     if (cursor) query = query.cursor(cursor);
@@ -761,7 +780,7 @@ router.get("/:id/operations", async (req, res, next) => {
     const { limit, cursor } = parsePaginationParams(req.query, 200);
 
     // Ensure account exists for proper 404s
-    await server.loadAccount(id);
+    await withHorizonTiming(req, () => server.loadAccount(id));
 
     let query = server.operations().forAccount(id).limit(limit).order("desc");
     if (cursor) query = query.cursor(cursor);
@@ -1760,7 +1779,7 @@ router.get("/:id", async (req, res, next) => {
     }
 
     // Fetch live account data from Horizon
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     // --- Balances -----------------------------------------------------------
     // formatAccountBalances splits balances into the native XLM entry and
@@ -1865,7 +1884,7 @@ router.get("/:id/risk-score", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     // Get first operation to calculate account age
     const firstOpResponse = await server
@@ -2066,7 +2085,7 @@ router.get("/:id/subentry-health", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     const MAX_SUBENTRIES = 1000;
     const totalSubentries = account.subentry_count;
@@ -2145,7 +2164,7 @@ router.get("/:id/reserve-breakdown", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     // BASE_RESERVE matches the existing /account/:id handler and the rest of
     // the codebase, which use 0.5 XLM (5 000 000 stroops) as the protocol-wide
@@ -2356,7 +2375,7 @@ router.get(
         validateAccountId(assetIssuer);
       }
 
-      const fresh = req.query.fresh === "true";
+      const fresh = req.query.fresh === "true" || req.query.fresh === true;
       const cacheKey = `freeze-status:${id}:${normalizedAssetCode}:${assetIssuer}`;
 
       if (!fresh) {
@@ -2367,7 +2386,7 @@ router.get(
         }
       }
 
-      const account = await server.loadAccount(id);
+      const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
       const trustline =
         normalizedAssetCode === "XLM"
@@ -2471,7 +2490,7 @@ router.get("/:id/transaction-count", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    await server.loadAccount(id);
+    await withHorizonTiming(req, () => server.loadAccount(id));
 
     let count = 0;
     let firstTransactionAt = null;
@@ -2575,7 +2594,7 @@ router.get(
         validateAccountId(assetIssuer);
       }
 
-      const account = await server.loadAccount(id);
+      const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
       if (normalizedAssetCode === "XLM") {
         return success(res, {
@@ -2758,7 +2777,7 @@ router.get("/:id/payment-summary", async (req, res, next) => {
     validateAccountId(id);
 
     // Ensure account exists (404 for non-existent accounts)
-    await server.loadAccount(id);
+    await withHorizonTiming(req, () => server.loadAccount(id));
 
     let totalSent = 0;
     let totalReceived = 0;
@@ -2971,7 +2990,7 @@ router.get("/:id/pool-positions", async (req, res, next) => {
       }
     }
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     const poolShareTrustlines = (account.balances || []).filter(
       (balance) => balance.asset_type === "liquidity_pool_shares",
@@ -3071,7 +3090,7 @@ router.get("/:id/transaction-count", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     const poolShareTrustlines = (account.balances || []).filter(
       (balance) => balance.asset_type === "liquidity_pool_shares",
@@ -3225,7 +3244,7 @@ router.post("/:id/multisig-plan", async (req, res, next) => {
       validateAccountId(signerKey);
     }
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const thresholds = account.thresholds;
 
     const accountSigners = account.signers || [];
@@ -3314,7 +3333,7 @@ router.get("/:id/data", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     const dataEntries = Object.entries(account.data || {}).map(
       ([key, value]) => ({
@@ -3452,7 +3471,7 @@ router.get("/:id/signing-keys", async (req, res, next) => {
       }
     }
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     // Normalise every signer entry from Horizon into a clean shape
     const signers = (account.signers || []).map((s) => ({
@@ -3587,7 +3606,7 @@ router.get("/:id/home-domain", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     return success(res, {
       accountId: account.id,
@@ -3608,7 +3627,7 @@ router.get("/:id/min-balance", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const subentryCount = account.subentry_count || 0;
     const baseReserveStroops = 5000000;
     const baseReserveXLM = "0.5000000";
@@ -3654,7 +3673,7 @@ router.get("/:id/flags", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const rawFlags = account.flags || {};
 
     return success(res, {
@@ -3681,7 +3700,7 @@ router.get("/:id/signers", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const rawThresholds = account.thresholds || {};
 
     const signers = (account.signers || []).map((signer) => ({
@@ -3949,7 +3968,7 @@ router.get("/:id/trustline-health", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const account = await server.loadAccount(id);
+    const account = await withHorizonTiming(req, () => server.loadAccount(id));
 
     // Filter out native XLM and extract trustline health data
     const trustlines = account.balances
@@ -4106,7 +4125,7 @@ router.get("/:id/transactions", async (req, res, next) => {
       const normalizedType = String(rawType).toLowerCase().trim();
 
       // Ensure the account exists (produce clean 404 for unknown accounts).
-      await server.loadAccount(id).catch((loadErr) => {
+      await withHorizonTiming(req, () => server.loadAccount(id)).catch((loadErr) => {
         if (loadErr && loadErr.response && loadErr.response.status === 404) {
           throw makeAccountNotFoundError(id, NETWORK);
         }
@@ -4181,6 +4200,165 @@ router.get("/:id/transactions", async (req, res, next) => {
     });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
+  }
+});
+
+/**
+ * POST /account/freeze-status
+ *
+ * Batch freeze-status check — returns authorization state for up to 20
+ * Stellar accounts against a single asset in one request.
+ *
+ * Request body:
+ *   {
+ *     addresses: ["G...", "G..."],   // 1–20 Stellar public keys
+ *     asset: { code: "USDC", issuer: "GA5Z..." }
+ *   }
+ *
+ * Response:
+ *   {
+ *     success: true,
+ *     data: {
+ *       results: {
+ *         "G...": { status, isAuthorized, isAuthorizedToMaintainLiabilities }
+ *       }
+ *     }
+ *   }
+ *
+ * Error entries (non-existent accounts or missing trustlines) are included in
+ * the results map with status "error" and an error message rather than causing
+ * the entire request to fail.
+ *
+ * Returns 400 when addresses array exceeds 20 entries or input is invalid.
+ */
+router.post("/freeze-status", async (req, res, next) => {
+  try {
+    const { addresses, asset } = req.body || {};
+
+    // --- Input validation ---
+    if (!Array.isArray(addresses) || addresses.length === 0) {
+      const err = new Error("Request body must include a non-empty 'addresses' array.");
+      err.isValidation = true;
+      err.field = "addresses";
+      err.status = 400;
+      return next(err);
+    }
+
+    if (addresses.length > 20) {
+      const err = new Error(
+        `Too many addresses: received ${addresses.length}, maximum is 20.`
+      );
+      err.isValidation = true;
+      err.field = "addresses";
+      err.receivedValue = String(addresses.length);
+      err.expectedFormat = "array of up to 20 Stellar public keys";
+      err.status = 400;
+      return next(err);
+    }
+
+    if (!asset || typeof asset !== "object") {
+      const err = new Error("Request body must include an 'asset' object with 'code' and 'issuer'.");
+      err.isValidation = true;
+      err.field = "asset";
+      err.status = 400;
+      return next(err);
+    }
+
+    const { code: assetCode, issuer: assetIssuer } = asset;
+    if (!assetCode || typeof assetCode !== "string") {
+      const err = new Error("'asset.code' is required and must be a string.");
+      err.isValidation = true;
+      err.field = "asset.code";
+      err.status = 400;
+      return next(err);
+    }
+    if (!assetIssuer || typeof assetIssuer !== "string") {
+      const err = new Error("'asset.issuer' is required and must be a string.");
+      err.isValidation = true;
+      err.field = "asset.issuer";
+      err.status = 400;
+      return next(err);
+    }
+
+    // Validate each address format
+    for (const addr of addresses) {
+      validateAccountId(addr);
+    }
+    validateAssetCode(assetCode);
+    validateAccountId(assetIssuer);
+
+    const normalizedCode = assetCode.toUpperCase();
+
+    // Fetch all accounts in parallel, recording timing for the whole batch
+    startHorizonTimer(req);
+    const accountResults = await Promise.allSettled(
+      addresses.map((addr) => server.loadAccount(addr))
+    );
+    stopHorizonTimer(req);
+
+    const results = {};
+
+    for (let i = 0; i < addresses.length; i++) {
+      const addr = addresses[i];
+      const outcome = accountResults[i];
+
+      if (outcome.status === "rejected") {
+        const err = outcome.reason;
+        const isNotFound =
+          (err && err.response && err.response.status === 404) ||
+          (err && err.isAccountNotFound);
+        results[addr] = {
+          status: "error",
+          error: isNotFound
+            ? `Account ${addr} was not found on the Stellar ${NETWORK} network.`
+            : (err && err.message) || "Failed to fetch account.",
+          isAuthorized: null,
+          isAuthorizedToMaintainLiabilities: null,
+        };
+        continue;
+      }
+
+      const account = outcome.value;
+      const trustline = (account.balances || []).find(
+        (b) =>
+          isNonNativeAsset(b) &&
+          b.asset_code === normalizedCode &&
+          b.asset_issuer === assetIssuer
+      );
+
+      if (!trustline) {
+        results[addr] = {
+          status: "error",
+          error: `Account does not hold asset ${normalizedCode}:${assetIssuer}.`,
+          isAuthorized: null,
+          isAuthorizedToMaintainLiabilities: null,
+        };
+        continue;
+      }
+
+      const isAuthorized = trustline.is_authorized !== false;
+      const isAuthorizedToMaintainLiabilities =
+        trustline.is_authorized_to_maintain_liabilities === true;
+
+      let status;
+      if (isAuthorized) {
+        status = "authorized";
+      } else if (isAuthorizedToMaintainLiabilities) {
+        status = "frozen_maintain_liabilities";
+      } else {
+        status = "frozen";
+      }
+
+      results[addr] = {
+        status,
+        isAuthorized,
+        isAuthorizedToMaintainLiabilities,
+      };
+    }
+
+    return success(res, { results });
+  } catch (err) {
+    next(err);
   }
 });
 
