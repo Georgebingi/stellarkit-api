@@ -3,6 +3,7 @@ const router  = express.Router();
 const webhookStore = require("../services/webhookStore");
 const { success }  = require("../utils/response");
 const StellarKitError = require("../utils/StellarKitError");
+const webhookSignatureAuth = require("../middleware/webhookSignatureAuth");
 
 /**
  * Validate a webhook registration request body.
@@ -56,7 +57,7 @@ function validateRegistration(body) {
  *
  * Response 400: { "success": false, "error": { "type": "ValidationError", ... } }
  */
-router.post("/", (req, res, next) => {
+router.post("/", webhookSignatureAuth, (req, res, next) => {
   try {
     const validationError = validateRegistration(req.body);
     if (validationError) {
@@ -88,7 +89,7 @@ router.post("/", (req, res, next) => {
  *     }
  *   }
  */
-router.get("/", (req, res) => {
+router.get("/", webhookSignatureAuth, (req, res) => {
   const webhooks = webhookStore.list();
   return success(res, { webhooks, total: webhooks.length });
 });
@@ -116,7 +117,7 @@ router.get("/", (req, res) => {
  *     }
  *   }
  */
-router.delete("/:webhookId", (req, res, next) => {
+router.delete("/:webhookId", webhookSignatureAuth, (req, res, next) => {
   try {
     const { webhookId } = req.params;
 

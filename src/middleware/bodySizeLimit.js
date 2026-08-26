@@ -20,7 +20,14 @@ function normalizeMaxBodySize(value) {
 }
 
 const requestBodySizeLimit = normalizeMaxBodySize(MAX_BODY_SIZE);
-const bodySizeLimit = express.json({ limit: requestBodySizeLimit });
+
+// Capture raw body for webhook signature verification
+const bodySizeLimit = express.json({
+  limit: requestBodySizeLimit,
+  verify: (req, res, buf, encoding) => {
+    req.rawBody = buf.toString(encoding || 'utf8');
+  },
+});
 
 module.exports = bodySizeLimit;
 module.exports.MAX_BODY_SIZE = requestBodySizeLimit;
