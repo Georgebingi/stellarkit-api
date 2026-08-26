@@ -1189,7 +1189,7 @@ router.get("/:id/trades", async (req, res, next) => {
     validateAccountId(id);
 
     const { limit, order, cursor } = parsePaginationParams(req.query);
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true;
 
     // --- ?startDate / ?endDate validation ---
     let startDate;
@@ -1239,22 +1239,36 @@ router.get("/:id/trades", async (req, res, next) => {
         if (endDate && t > endDate) return false;
         return true;
       })
-      .map((trade) => ({
-      id: trade.id,
-      pagingToken: trade.paging_token,
-      ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
-      offerId: trade.offer_id,
-      tradeType: trade.base_is_seller ? "sell" : "buy",
-      baseAccount: trade.base_account,
-      baseAmount: trade.base_amount,
-      baseAsset: normalizeAsset(trade.base_asset_code, trade.base_asset_issuer, trade.base_asset_type),
-      counterAccount: trade.counter_account,
-      counterAmount: trade.counter_amount,
-      counterAsset: normalizeAsset(trade.counter_asset_code, trade.counter_asset_issuer, trade.counter_asset_type),
-      priceNumerator: trade.price?.n || null,
-      priceDenominator: trade.price?.d || null,
-      baseIsSeller: trade.base_is_seller === true,
-    }));
+      .map((trade) => {
+        const priceN = trade.price?.n;
+        const priceD = trade.price?.d;
+        const price =
+          priceN != null && priceD != null && Number(priceD) !== 0
+            ? toSevenDecimalString(Number(priceN) / Number(priceD))
+            : "0.0000000";
+        return {
+          id: trade.id,
+          pagingToken: trade.paging_token,
+          ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
+          offerId: trade.offer_id,
+          tradeType: trade.base_is_seller ? "sell" : "buy",
+          baseAccount: trade.base_account,
+          baseAmount: toSevenDecimalString(trade.base_amount),
+          baseAsset: normalizeAsset(
+            trade.base_asset_code,
+            trade.base_asset_issuer,
+            trade.base_asset_type,
+          ),
+          counterAccount: trade.counter_account,
+          counterAmount: toSevenDecimalString(trade.counter_amount),
+          counterAsset: normalizeAsset(
+            trade.counter_asset_code,
+            trade.counter_asset_issuer,
+            trade.counter_asset_type,
+          ),
+          price,
+        };
+      });
 
     const nextCursor = records.length
       ? records[records.length - 1].paging_token || null
