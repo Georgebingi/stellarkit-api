@@ -594,10 +594,12 @@ router.get("/:code/:issuer/verify", async (req, res, next) => {
 
 /**
  * GET /asset/:code/:issuer/toml
- * Resolves the issuer's home_domain and fetches/returns their normalised
- * stellar.toml. Returns a specific TomlFetchFailed error (502) when the
- * TOML cannot be fetched — due to a network error, a missing file, or
- * invalid TOML content.
+ * Fetches the issuer's stellar.toml file, parses it, and returns the
+ * relevant asset metadata in clean JSON format.
+ *
+ * Returns { code, issuer, name, description, image, anchorAssetType, conditions }
+ * Missing optional fields are returned as null.
+ * Response is cached with a 5 minute TTL.
  *
  * @param {string} code   - Asset code (e.g. USDC)
  * @param {string} issuer - Issuer account public key (G...)
@@ -609,6 +611,18 @@ router.get("/:code/:issuer/toml", async (req, res, next) => {
   try {
     const { code, issuer } = req.params;
     validateAsset(code, issuer);
+
+    const assetCode = code.toUpperCase();
+    const cacheKey = `asset-toml:${assetCode}:${issuer}`;
+    const fresh = isFreshRequest(req.query);
+
+    if (!fresh) {
+      const cached = cacheService.get(cacheKey);
+      if (cached) {
+        res.set("X-Cache", "HIT");
+        return success(res, cached);
+      }
+    }
 
     let issuerAccount;
     try {
@@ -633,7 +647,26 @@ router.get("/:code/:issuer/toml", async (req, res, next) => {
       throw makeTomlFetchFailedError(issuer);
     }
 
-    return success(res, toml);
+    // Find the currency entry for this specific asset
+    const currencies = toml.currencies || [];
+    const assetEntry = currencies.find(
+      (curr) => curr.code === assetCode && curr.issuer === issuer
+    );
+
+    // Build the response with asset-specific metadata
+    const data = {
+      code: assetCode,
+      issuer: issuer,
+      name: assetEntry?.name || null,
+      description: assetEntry?.desc || assetEntry?.description || null,
+      image: assetEntry?.image || null,
+      anchorAssetType: assetEntry?.asset?.type || null,
+      conditions: assetEntry?.conditions || null,
+    };
+
+    cacheService.set(cacheKey, data, cacheTTL.toml);
+    res.set("X-Cache", "MISS");
+    return success(res, data);
   } catch (err) {
     next(err);
   }
