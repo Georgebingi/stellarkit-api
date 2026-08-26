@@ -84,7 +84,7 @@ This project is ideal for:
 | ------ | ---- | ----------- | ------------ |
 | GET | `/account/:id` | Account details, balances, reserve breakdown | — |
 | GET | `/account/:id/age` | Account age and longevity metrics | — |
-| GET | `/account/:id/balances` | XLM and asset balances | — |
+| GET | `/account/:id/balances` | XLM and asset balances | `native`, `assets` |
 | GET | `/account/:id/native-balance` | Native XLM balance only | — |
 | GET | `/account/:id/asset-balance/:assetCode/:assetIssuer` | Balance for a specific asset trustline | — |
 | GET | `/account/:id/sequence` | Current sequence number | — |

@@ -40,6 +40,7 @@ async function withHorizonTiming(req, fn) {
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
 const { parsePaginationParams } = require("../utils/pagination");
+const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 
 
 const axios = require("axios");
@@ -369,6 +370,8 @@ router.get("/:id/trustlines", async (req, res, next) => {
  *   - assets (string, optional) — comma-separated asset identifiers to filter by.
  *     Format: "XLM" for native, "CODE:ISSUER" for issued assets.
  *     Invalid identifiers are ignored. Example: ?assets=XLM,USDC:GA...
+ *   - native (boolean, optional) — when "true", returns only the native XLM balance.
+ *     Works independently of the assets filter.
  */
 router.get("/:id/balances", async (req, res, next) => {
   try {
@@ -377,6 +380,16 @@ router.get("/:id/balances", async (req, res, next) => {
 
     const account = await withHorizonTiming(req, () => server.loadAccount(id));
     const formatted = formatAccountBalances(account);
+
+    const nativeOnly = req.query.native === "true" || req.query.native === true;
+
+    if (nativeOnly) {
+      // Return only native XLM balance
+      return success(res, {
+        xlm: formatted.xlm,
+        assets: [],
+      });
+    }
 
     const assetsFilter = req.query.assets;
     if (assetsFilter) {
@@ -567,7 +580,7 @@ router.get("/:id/sequence", async (req, res, next) => {
     const data = {
       accountId: account.id,
       sequence: account.sequence,
-      lastModifiedLedger: account.last_modified_ledger,
+      lastModifiedLedger: formatLedgerSequence(account.last_modified_ledger),
     };
 
     cacheService.set(cacheKey, data, cacheTTL.sequence);

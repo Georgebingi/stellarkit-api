@@ -7,6 +7,7 @@ const { server } = require("../config/stellar");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { formatTransaction } = require("../utils/formatTransaction");
 const { normalizeAsset } = require("../utils/asset");
+const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 const webhookRegistry = require("../services/webhookRegistry");
 const webhookDelivery = require("../services/webhookDelivery");
 
@@ -361,7 +362,7 @@ router.get("/ledgers", async (req, res, next) => {
       onmessage: (ledger) => {
         if (res.writableEnded || res.destroyed) return;
         res.write(`data: ${JSON.stringify({
-          sequence: ledger.sequence,
+          sequence: formatLedgerSequence(ledger.sequence),
           closedAt: ledger.closed_at,
           baseFee: ledger.base_fee_in_stroops || ledger.base_fee,
           transactionCount: ledger.successful_transaction_count,

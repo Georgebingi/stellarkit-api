@@ -5,6 +5,7 @@ const { success } = require("../utils/response");
 const cacheService = require("../services/cache");
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS || "5000", 10) / 1000; // seconds
 const cacheTTL = require("../config/cacheConfig");
+const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 
 const { parseStellarAmount } = require("../utils/parseStellarAmount");
 
@@ -110,7 +111,7 @@ router.get("/", async (req, res, next) => {
         p99: feeStats.fee_charged.p99,
       },
       history: ledgerHistoryRecords.map((ledger) => ({
-        ledger: parseInt(ledger.sequence, 10),
+        ledger: formatLedgerSequence(ledger.sequence),
         baseFee: parseInt(ledger.base_fee_in_stroops || ledger.base_fee, 10) || 0,
         capacityUsage: parseFloat(
           Math.min(

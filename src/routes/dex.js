@@ -64,7 +64,8 @@ router.get("/arbitrage/:assetCode/:assetIssuer", async (req, res, next) => {
       }
     }
 
-    const asset = (assetCode.toUpperCase() === "XLM" && assetIssuer.toLowerCase() === "native")
+    const assetIdentifier = { code: assetCode.toUpperCase(), issuer: assetIssuer.toLowerCase() };
+    const asset = (isNativeAsset(assetIdentifier) || (assetCode.toUpperCase() === "XLM" && assetIssuer.toLowerCase() === "native"))
       ? Asset.native()
       : new Asset(assetCode.toUpperCase(), assetIssuer);
 
@@ -540,7 +541,7 @@ router.get("/price/:sellAsset/:buyAsset", async (req, res, next) => {
  * @returns {{ code: string, issuer: string|null, type: string }}
  */
 function formatAsset(type, code, issuer) {
-  if (type === "native") {
+  if (isNativeAsset({ type })) {
     return { code: "XLM", issuer: null, type: "native" };
   }
   return {

@@ -5,6 +5,7 @@ const { success } = require("../utils/response");
 const StellarKitError = require("../utils/StellarKitError");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
+const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 const { startHorizonTimer, stopHorizonTimer } = require("../middleware/requestLogger");
 
 /**
@@ -221,7 +222,7 @@ router.get("/base-fee", async (req, res, next) => {
       baseFeeStroops,
       baseFeeXLM,
       isSurge,
-      ledgerSequence: latestLedger.sequence ? parseInt(latestLedger.sequence, 10) : null,
+      ledgerSequence: formatLedgerSequence(latestLedger.sequence),
       ledgerClosedAt: latestLedger.closed_at || null,
       note: "Base fee is reported in stroops and normalized XLM units.",
     };
@@ -295,10 +296,8 @@ router.get("/fee-percentiles", async (req, res, next) => {
       baseFee: buildFeeObject(baseFeeStroops),
       minFee: buildFeeObject(minFeeStroops),
       maxFee: buildFeeObject(maxFeeStroops),
-      ledgerSequence: latestLedger.sequence
-        ? parseInt(latestLedger.sequence, 10)
-        : null,
-      timestamp: new Date().toISOString(),
+      ledgerSequence: formatLedgerSequence(latestLedger.sequence),
+      timestamp: new Date().toISOTimestamp(),
     };
 
     cacheService.set(cacheKey, data, FEE_PERCENTILES_CACHE_TTL);
