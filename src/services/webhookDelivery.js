@@ -1,79 +1,108 @@
-/**
- * Webhook delivery service.
- *
- * Sends normalised event payloads to all registered subscriber URLs that
- * match the event type and contract ID. Delivery is fire-and-forget with a
- * single retry on network failure; errors are logged but never surfaced to
- * the caller so that a failing subscriber cannot block event processing.
- */
-
 const axios = require("axios");
 const logger = require("../utils/logger");
-const { findMatching } = require("./webhookRegistry");
-
-const DELIVERY_TIMEOUT_MS = 5000;
 
 /**
- * Attempt to POST `payload` to `url`. Returns true on 2xx, false otherwise.
- *
- * @param {string} url
- * @param {object} payload
- * @returns {Promise<boolean>}
+ * Webhook delivery service that handles sending webhook payloads to registered endpoints.
+ * Retries failed deliveries and logs delivery attempts.
  */
-async function attemptDelivery(url, payload) {
-  try {
-    const response = await axios.post(url, payload, {
-      timeout: DELIVERY_TIMEOUT_MS,
-      headers: { "Content-Type": "application/json" },
-      validateStatus: (status) => status >= 200 && status < 300,
-    });
-    return true;
-  } catch {
-    return false;
+class WebhookDelivery {
+  constructor() {
+    this.maxRetries = 3;
+    this.retryDelayMs = 1000;
+    this.timeoutMs = 30000;
+  }
+
+  /**
+   * Trigger webhook delivery for registered webhooks.
+   * @param {Array} webhooks - Array of webhook objects with 'url' property
+   * @param {Object} payload - The event payload to send
+   * @returns {Promise<Array>} Array of delivery results
+   */
+  async triggerWebhooks(webhooks, payload) {
+    if (!webhooks || webhooks.length === 0) {
+      return [];
+    }
+
+    const deliveryPromises = webhooks.map((webhook) => this.deliverWebhook(webhook, payload));
+
+    return Promise.all(deliveryPromises);
+  }
+
+  /**
+   * Deliver a single webhook with retry logic.
+   * @param {Object} webhook - Webhook object with 'id' and 'url' properties
+   * @param {Object} payload - The event payload to send
+   * @returns {Promise<Object>} Delivery result object
+   */
+  async deliverWebhook(webhook, payload, attempt = 1) {
+    try {
+      const response = await axios.post(webhook.url, payload, {
+        timeout: this.timeoutMs,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "StellarKit-Webhook/1.0",
+          "X-Webhook-Event": payload.event,
+        },
+      });
+
+      logger.info(
+        {
+          webhookId: webhook.id,
+          url: webhook.url,
+          statusCode: response.status,
+          attempt,
+        },
+        "Webhook delivered successfully"
+      );
+
+      return {
+        webhookId: webhook.id,
+        url: webhook.url,
+        success: true,
+        statusCode: response.status,
+        attempt,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      if (attempt < this.maxRetries) {
+        logger.warn(
+          {
+            webhookId: webhook.id,
+            url: webhook.url,
+            attempt,
+            maxRetries: this.maxRetries,
+            error: error.message,
+          },
+          "Webhook delivery failed, retrying..."
+        );
+
+        // Exponential backoff
+        await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs * attempt));
+
+        return this.deliverWebhook(webhook, payload, attempt + 1);
+      } else {
+        logger.error(
+          {
+            webhookId: webhook.id,
+            url: webhook.url,
+            attempt,
+            maxRetries: this.maxRetries,
+            error: error.message,
+          },
+          "Webhook delivery failed after max retries"
+        );
+
+        return {
+          webhookId: webhook.id,
+          url: webhook.url,
+          success: false,
+          error: error.message,
+          attempt,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
   }
 }
 
-/**
- * Deliver a `contract.event` payload to all matching webhook subscribers.
- *
- * The normalised payload shape is:
- * ```json
- * {
- *   "event":      "contract.event",
- *   "contractId": "<C… address>",
- *   "eventType":  "<string from the event's first topic>",
- *   "topic":      ["<xdr value>", ...],
- *   "value":      "<decoded or raw XDR value>",
- *   "ledger":     <number>
- * }
- * ```
- *
- * @param {object} contractEvent  Normalised contract event (see shape above).
- * @returns {Promise<void>}
- */
-async function deliverContractEvent(contractEvent) {
-  const { contractId } = contractEvent;
-  const subscribers = findMatching("contract.event", contractId);
-
-  if (subscribers.length === 0) return;
-
-  await Promise.allSettled(
-    subscribers.map(async (webhook) => {
-      const success = await attemptDelivery(webhook.url, contractEvent);
-
-      if (!success) {
-        // Single retry after a short back-off
-        await new Promise((r) => setTimeout(r, 500));
-        const retrySuccess = await attemptDelivery(webhook.url, contractEvent);
-        if (!retrySuccess) {
-          logger.warn(
-            { webhookId: webhook.id, url: webhook.url, contractId },
-            `[WEBHOOK] Delivery failed after retry for webhook ${webhook.id}`,
-          );
-        }
-      }
-    }),
-  );
-}
-
-module.exports = { deliverContractEvent };
+module.exports = new WebhookDelivery();
