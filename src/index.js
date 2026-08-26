@@ -25,6 +25,8 @@ const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
 
 const networkStatusRouter = require("./routes/networkStatus");
+const webhooksRouter = require("./routes/webhooks");
+const contractEventPoller = require("./services/contractEventPoller");
 const feeEstimateRouter = require("./routes/feeEstimate");
 const accountRouter = require("./routes/account");
 const transactionsRouter = require("./routes/transactions");
@@ -46,6 +48,9 @@ app.disable("x-powered-by");
 const { normalizeAmountFields } = require("./utils/response");
 
 const PORT = process.env.PORT || 3000;
+
+// Captured once at process start so /health can report accurate uptime.
+const SERVER_STARTED_AT = new Date().toISOString();
 
 async function warmNetworkStatusCache({
   logger: customLogger = logger,
@@ -195,6 +200,9 @@ app.get("/health", (req, res) => {
       version: require("../package.json").version,
       timestamp: new Date().toISOString(),
       network: process.env.STELLAR_NETWORK || "testnet",
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      startedAt: SERVER_STARTED_AT,
     },
   });
 });
@@ -226,6 +234,7 @@ app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
 app.use("/transaction", etagMiddleware, transactionEffectsRouter);
+app.use("/webhooks", webhooksRouter);
 
 // ── Root
 app.get("/", (req, res) => {
@@ -634,6 +643,7 @@ function startServer({
   });
 
   setupWebSocketHook(httpServer);
+  contractEventPoller.start();
   return httpServer;
 }
 
