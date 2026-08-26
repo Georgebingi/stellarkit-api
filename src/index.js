@@ -21,6 +21,7 @@ const requestIdMiddleware = require("./middleware/requestId");
 const requestLogger = require("./middleware/requestLogger");
 const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
+const rejectDuplicateQueryParams = require("./middleware/rejectDuplicateQueryParams");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
 const metricsService = require("./services/metrics");
@@ -181,6 +182,7 @@ app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(contentTypeValidator);
 app.use(bodySizeLimit);
+app.use(rejectDuplicateQueryParams);
 app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
 
 // ── Rate Limiting ───────────────────────────────────────────────────────────
