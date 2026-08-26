@@ -40,6 +40,7 @@ async function withHorizonTiming(req, fn) {
 
 const { buildAccountAgeResponse } = require("../utils/accountAge");
 const { parsePaginationParams } = require("../utils/pagination");
+const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 
 
 const axios = require("axios");
@@ -579,7 +580,7 @@ router.get("/:id/sequence", async (req, res, next) => {
     const data = {
       accountId: account.id,
       sequence: account.sequence,
-      lastModifiedLedger: account.last_modified_ledger,
+      lastModifiedLedger: formatLedgerSequence(account.last_modified_ledger),
     };
 
     cacheService.set(cacheKey, data, cacheTTL.sequence);
