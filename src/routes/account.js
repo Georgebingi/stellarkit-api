@@ -984,6 +984,27 @@ router.get("/:id/payments", async (req, res, next) => {
     //   ?assetCode=USDC              → match any issuer of USDC
     //   ?assetCode=USDC&assetIssuer=GA... → exact asset match
 
+    // --- ?startDate / ?endDate validation ---
+    let startDate;
+    let endDate;
+    if (req.query.startDate !== undefined) {
+      startDate = validateISODate(req.query.startDate, "startDate");
+    }
+    if (req.query.endDate !== undefined) {
+      endDate = validateISODate(req.query.endDate, "endDate");
+    }
+    if (startDate && endDate && startDate >= endDate) {
+      const err = new Error(
+        "Query param 'startDate' must be before 'endDate'.",
+      );
+      err.isValidation = true;
+      err.field = "startDate";
+      err.receivedValue = req.query.startDate;
+      err.expectedFormat = "ISO 8601 date earlier than endDate";
+      err.status = 400;
+      throw err;
+    }
+
     let query = server.payments().forAccount(id).limit(limit).order(order);
     if (cursor) query = query.cursor(cursor);
 
@@ -1078,14 +1099,23 @@ router.get("/:id/payments", async (req, res, next) => {
       };
     });
 
+    // Apply ?startDate / ?endDate filter on createdAt
+    const filteredOps = paymentOps.filter((p) => {
+      if (!startDate && !endDate) return true;
+      const t = new Date(p.createdAt);
+      if (startDate && t < startDate) return false;
+      if (endDate && t > endDate) return false;
+      return true;
+    });
+
     const lastRecord = rawRecords[rawRecords.length - 1];
     const nextCursor = lastRecord ? lastRecord.paging_token : null;
 
     return success(res, {
-      items: paymentOps,
-      total: paymentOps.length,
+      items: filteredOps,
+      total: filteredOps.length,
       limit,
-      cursor: paymentOps.length ? nextCursor : null,
+      cursor: filteredOps.length ? nextCursor : null,
     });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
