@@ -79,7 +79,7 @@ router.get("/:id/trades", async (req, res, next) => {
     const { limit, order, cursor } = parsePaginationParams(req.query);
     const baseAssetFilter = parseAssetFilter(req.query.baseAsset, "baseAsset");
     const counterAssetFilter = parseAssetFilter(req.query.counterAsset, "counterAsset");
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const normalizedCursor = cursor || "";
     const normalizedBaseAsset = baseAssetFilter ? baseAssetFilter.cacheToken : "";
     const normalizedCounterAsset = counterAssetFilter ? counterAssetFilter.cacheToken : "";

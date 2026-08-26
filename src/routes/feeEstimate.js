@@ -33,7 +33,7 @@ router.get("/", async (req, res, next) => {
   try {
     const operations = Math.max(1, parseInt(req.query.operations) || 1);
     const cacheKey = `fee-estimate:${operations}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Check cache first (unless fresh=true)
     if (!fresh) {
@@ -164,7 +164,7 @@ router.get("/", async (req, res, next) => {
 router.get("/surge-status", async (req, res, next) => {
   try {
     const cacheKey = "fee-surge-status";
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Check cache first (unless fresh=true)
     if (!fresh) {
@@ -273,7 +273,7 @@ router.get("/surge-status", async (req, res, next) => {
 router.get("/trends", async (req, res, next) => {
   try {
     const cacheKey = "fee-trends";
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Check cache first (unless fresh=true)
     if (!fresh) {

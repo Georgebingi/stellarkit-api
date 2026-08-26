@@ -150,7 +150,7 @@ router.get("/contract/:id/storage", async (req, res, next) => {
     const rawLimit = req.query.limit !== undefined ? req.query.limit : 50;
     const limit = validateLimit(rawLimit, 50);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // ── 2. Cache check ──────────────────────────────────────────────────────
     const cacheKey = `contract-storage:${id}:${limit}`;

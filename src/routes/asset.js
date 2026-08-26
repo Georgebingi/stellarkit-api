@@ -126,7 +126,7 @@ router.get(
       const assetCode = code.toUpperCase();
       const { limit, order, cursor } = parsePaginationParams(req.query);
 
-      const fresh = req.query.fresh === "true";
+      const fresh = req.query.fresh === true || req.query.fresh === "true";
       const minBalance = parseNonNegativeDecimalQueryParam(
         req.query.minBalance,
         "minBalance",

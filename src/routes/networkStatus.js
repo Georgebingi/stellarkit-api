@@ -22,7 +22,7 @@ const cacheTTL = require("../config/cacheConfig");
 router.get("/", async (req, res, next) => {
   try {
     const cacheKey = "network-status";
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Check cache first (unless fresh=true)
     if (!fresh) {

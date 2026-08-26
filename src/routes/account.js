@@ -280,7 +280,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const includeMetadata = req.query.includeMetadata === "true";
     const { assetCode } = req.query;
     const sponsored = req.query.sponsored;
@@ -531,7 +531,7 @@ router.get("/:id/sequence", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `sequence:${id}`;
 
     if (!fresh) {
@@ -1101,7 +1101,7 @@ router.get("/:id/trades", async (req, res, next) => {
     validateAccountId(id);
 
     const { limit, order, cursor } = parsePaginationParams(req.query);
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // --- ?startDate / ?endDate validation ---
     let startDate;
@@ -1341,7 +1341,7 @@ router.get("/:id/effects", async (req, res, next) => {
     }
 
     const cacheKey = `effects:${id}:${limit}:${order}:${cursor || ""}:${effectType || ""}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
@@ -1419,7 +1419,7 @@ router.get("/:id/claimable-balances", async (req, res, next) => {
 
     const includeExpired = req.query.includeExpired === "true";
     const cacheKey = `claimable-balances:${id}:${includeExpired}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
@@ -1646,7 +1646,7 @@ router.get("/:id", async (req, res, next) => {
     validateAccountId(id);
 
     const cacheKey = `account:${id}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Serve from cache unless caller requests a fresh fetch
     if (!fresh) {
@@ -2254,7 +2254,7 @@ router.get(
         validateAccountId(assetIssuer);
       }
 
-      const fresh = req.query.fresh === "true";
+      const fresh = req.query.fresh === true || req.query.fresh === "true";
       const cacheKey = `freeze-status:${id}:${normalizedAssetCode}:${assetIssuer}`;
 
       if (!fresh) {
@@ -2858,7 +2858,7 @@ router.get("/:id/pool-positions", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `pool-positions:${id}`;
 
     if (!fresh) {
@@ -3252,7 +3252,7 @@ router.get("/:id/transaction-count", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `transaction-count:${id}`;
 
     if (!fresh) {
@@ -3331,7 +3331,7 @@ router.get("/:id/signing-keys", async (req, res, next) => {
       minWeight = parsed;
     }
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `signing-keys:${id}`;
 
     if (!fresh) {

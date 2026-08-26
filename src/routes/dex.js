@@ -54,7 +54,7 @@ router.get("/arbitrage/:assetCode/:assetIssuer", async (req, res, next) => {
     // A fixed key covers all pairs per asset; TTL defaults to 5 s and is
     // configurable via CACHE_TTL_ARBITRAGE_MS.
     const ARBITRAGE_CACHE_KEY = `dex:arbitrage:${assetCode.toUpperCase()}:${assetIssuer}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     if (!fresh) {
       const cached = cacheService.get(ARBITRAGE_CACHE_KEY);
@@ -772,7 +772,7 @@ router.get("/top-markets", async (req, res, next) => {
 router.get("/arbitrage-opportunities", async (req, res, next) => {
   try {
     const CACHE_KEY = "dex:arbitrage-opportunities";
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     if (!fresh) {
       const cached = cacheService.get(CACHE_KEY);
