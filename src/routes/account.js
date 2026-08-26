@@ -1531,7 +1531,7 @@ router.get("/:id/claimable-balances", async (req, res, next) => {
       }
     }
 
-    let query = server.claimableBalances().forClaimant(id).limit(limit).order(order);
+    let query = server.claimableBalances().claimant(id).limit(limit).order(order);
     if (cursor) query = query.cursor(cursor);
 
     const response = await query.call();

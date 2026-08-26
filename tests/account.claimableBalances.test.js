@@ -17,7 +17,7 @@ jest.mock("../src/config/stellar", () => {
 
 function mockClaimableBalances(records) {
   server.claimableBalances.mockReturnValue({
-    forClaimant: jest.fn().mockReturnThis(),
+    claimant: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     cursor: jest.fn().mockReturnThis(),
@@ -241,13 +241,13 @@ describe("Account Claimable Balances API", () => {
       const otherAccountId = Keypair.random().publicKey();
 
       server.claimableBalances.mockReturnValue({
-        forClaimant: jest.fn().mockReturnThis(),
+        claimant: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),
         order: jest.fn().mockReturnThis(),
         cursor: jest.fn().mockReturnThis(),
         call: jest.fn().mockImplementation(() => {
           // Return different data for different accounts
-          if (server.claimableBalances().forClaimant.mock.calls[0][0] === accountId) {
+          if (server.claimableBalances().claimant.mock.calls[0][0] === accountId) {
             return Promise.resolve({
               records: [
                 {
