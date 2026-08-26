@@ -957,7 +957,39 @@ router.get("/:id/operations", async (req, res, next) => {
 
 /**
  * GET /account/:id/payments
- * Returns payment and create_account operations with full asset detail (including TOML metadata).
+ *
+ * Returns payment operations for an account by calling
+ * `server.payments().forAccount(id)` — the Horizon payments stream — and
+ * normalising each record into the StellarKit shape.
+ *
+ * Covered operation types:
+ *   - payment                    → direct XLM or asset transfer
+ *   - path_payment_strict_send   → cross-asset path payment (exact send amount)
+ *   - path_payment_strict_receive→ cross-asset path payment (exact receive amount)
+ *   - create_account             → initial account funding (treated as XLM payment)
+ *
+ * Query params:
+ *   - limit       (number,  default: 10, max: 200)
+ *   - cursor      (string,  pagination cursor from previous response)
+ *   - order       ("asc"|"desc", default: "desc")
+ *   - assetCode   (string,  optional) — filter to payments involving this asset code
+ *   - assetIssuer (string,  optional) — narrow assetCode filter to a specific issuer
+ *   - startDate   (ISO 8601 string, optional) — exclude records before this date
+ *   - endDate     (ISO 8601 string, optional) — exclude records after this date
+ *
+ * Response shape (each item):
+ *   {
+ *     paymentId:     string,
+ *     type:          "payment"|"path_payment_strict_send"|"path_payment_strict_receive"|"create_account",
+ *     from:          string,   // sender public key
+ *     to:            string,   // receiver public key
+ *     asset:         { code, issuer, type },  // destination asset
+ *     amount:        string,   // destination amount (7 decimals)
+ *     sourceAsset:   { code, issuer, type } | undefined,  // path payments only
+ *     sourceAmount:  string | undefined,                  // path payments only
+ *     createdAt:     string,
+ *     transactionHash: string,
+ *   }
  */
 router.get("/:id/payments", async (req, res, next) => {
   try {
@@ -971,7 +1003,7 @@ router.get("/:id/payments", async (req, res, next) => {
       "subentry-health", "merge-eligibility", "offers", "payments",
       "operation-breakdown", "offer-history", "timeline", "data",
       "pool-positions", "risk-score", "trustline-health", "age", "volume",
-      "payment-summary", "operations"
+      "payment-summary", "operations",
     ];
     if (reservedWords.includes(id)) {
       return next();
@@ -980,9 +1012,31 @@ router.get("/:id/payments", async (req, res, next) => {
 
     const { limit, order, cursor } = parsePaginationParams(req.query);
 
-    // Optional asset filters — both are independently optional:
-    //   ?assetCode=USDC              → match any issuer of USDC
-    //   ?assetCode=USDC&assetIssuer=GA... → exact asset match
+    // ── Optional filters ──────────────────────────────────────────────────
+    // assetCode / assetIssuer are applied after fetching so that the Horizon
+    // page size matches the requested limit exactly even when some records are
+    // filtered out.  This is consistent with how other filtered endpoints in
+    // the project work (e.g. /trustlines).
+    const filterCode   = req.query.assetCode   ? String(req.query.assetCode).toUpperCase()   : null;
+    const filterIssuer = req.query.assetIssuer ? String(req.query.assetIssuer)               : null;
+
+    // Date filters — ISO 8601, validated below
+    let startDate = null;
+    let endDate   = null;
+    if (req.query.startDate !== undefined) {
+      startDate = validateISODate(req.query.startDate, "startDate");
+    }
+    if (req.query.endDate !== undefined) {
+      endDate = validateISODate(req.query.endDate, "endDate");
+    }
+    if (startDate && endDate && startDate >= endDate) {
+      const err = new Error("Query param 'startDate' must be before 'endDate'.");
+      err.isValidation = true;
+      err.field = "startDate";
+      err.receivedValue = req.query.startDate;
+      err.expectedFormat = "ISO 8601 date earlier than endDate";
+      throw err;
+    }
 
     // --- ?startDate / ?endDate validation ---
     let startDate;
@@ -1008,96 +1062,100 @@ router.get("/:id/payments", async (req, res, next) => {
     let query = server.payments().forAccount(id).limit(limit).order(order);
     if (cursor) query = query.cursor(cursor);
 
-    await query.call();
-    // Use operations endpoint to get payment + create_account ops
-    const opQuery = server.operations().forAccount(id).limit(limit).order(order);
-    const opResponse = await (cursor ? opQuery.cursor(cursor) : opQuery).call();
-    const rawRecords = opResponse.records || [];
+    const response = await query.call();
+    const rawRecords = response.records || [];
 
-    const issuerCache = new Map();
-    const tomlCache = new Map();
+    // ── Normalise each record ─────────────────────────────────────────────
+    const PAYMENT_TYPES = new Set([
+      "payment",
+      "path_payment_strict_send",
+      "path_payment_strict_receive",
+      "create_account",
+    ]);
 
-    const paymentOps = [];
+    const payments = [];
+
     for (const op of rawRecords) {
-      if (op.type === "payment" || op.type === "create_account") {
-        const isPayment = op.type === "payment";
-        const assetCode = isPayment ? op.asset_code || "XLM" : "XLM";
-        const assetIssuer = isPayment ? op.asset_issuer || null : null;
+      if (!PAYMENT_TYPES.has(op.type)) continue;
 
-        // Apply assetCode filter (case-insensitive, already uppercased above)
-        if (filterCode && assetCode.toUpperCase() !== filterCode) return;
-
-        // Apply assetIssuer filter only when both params are provided
-        if (filterCode && filterIssuer && assetIssuer !== filterIssuer) return;
-        const assetType = isPayment ? op.asset_type || "native" : "native";
-
-        let assetDetail = {
-          code: assetCode,
-          issuer: assetIssuer,
-          type: assetType,
-        };
-
-        if (!isNativeAsset({ type: assetType }) && assetIssuer) {
-          if (!issuerCache.has(assetIssuer)) {
-            issuerCache.set(
-              assetIssuer,
-              server
-                .loadAccount(assetIssuer)
-                .then((a) => a.home_domain || null)
-                .catch(() => null),
-            );
-          }
-
-          const homeDomain = await issuerCache.get(assetIssuer);
-
-          if (homeDomain) {
-            if (!tomlCache.has(homeDomain)) {
-              tomlCache.set(homeDomain, homeDomain);
-            }
-            try {
-              const toml = await getAssetMetadataFromToml(
-                homeDomain,
-                assetCode,
-              );
-              if (toml) {
-                assetDetail = { ...assetDetail, toml };
-              }
-            } catch (_) {
-              // TOML resolution failed, keep basic asset detail
-            }
-          }
-        }
-
-        paymentOps.push({
-          type: op.type,
-          amount: isPayment ? op.amount : op.starting_balance,
-          asset: assetDetail,
-          sender: isPayment ? op.from : op.funder,
-          receiver: isPayment ? op.to : op.account,
-          createdAt: toISOTimestamp(op.created_at),
-        });
+      // ── Date filtering ──────────────────────────────────────────────────
+      if (startDate || endDate) {
+        const createdAtDate = new Date(op.created_at);
+        if (startDate && createdAtDate < startDate) continue;
+        if (endDate   && createdAtDate > endDate)   continue;
       }
-    }
 
-    const payments = rawRecords.map((op) => {
-      const isPayment = op.type === "payment";
-      const assetCode = isPayment ? op.asset_code || "XLM" : "XLM";
-      const assetIssuer = isPayment ? op.asset_issuer || null : null;
-      const assetType = isPayment ? op.asset_type || "native" : "native";
-      return {
-        paymentId: op.id,
-        from: isPayment ? op.from : op.funder,
-        to: isPayment ? op.to : op.account,
-        asset: normalizeAsset(
-          assetCode === "XLM" ? "XLM" : assetCode,
-          assetIssuer,
-          assetType,
-        ),
-        amount: isPayment ? op.amount : op.starting_balance,
-        createdAt: toISOTimestamp(op.created_at),
+      // ── Resolve destination asset and amounts by operation type ──────────
+      let destAssetCode, destAssetIssuer, destAssetType, amount;
+      let sourceAsset = undefined;
+      let sourceAmount = undefined;
+      let from, to;
+
+      if (op.type === "create_account") {
+        destAssetCode   = "XLM";
+        destAssetIssuer = null;
+        destAssetType   = "native";
+        amount          = op.starting_balance;
+        from            = op.funder;
+        to              = op.account;
+      } else if (op.type === "payment") {
+        destAssetCode   = op.asset_type === "native" ? "XLM" : (op.asset_code || "XLM");
+        destAssetIssuer = op.asset_type === "native" ? null  : (op.asset_issuer || null);
+        destAssetType   = op.asset_type || "native";
+        amount          = op.amount;
+        from            = op.from;
+        to              = op.to;
+      } else {
+        // path_payment_strict_send / path_payment_strict_receive
+        destAssetCode   = op.asset_type === "native" ? "XLM" : (op.asset_code || "XLM");
+        destAssetIssuer = op.asset_type === "native" ? null  : (op.asset_issuer || null);
+        destAssetType   = op.asset_type || "native";
+        amount          = op.amount;
+        from            = op.from;
+        to              = op.to;
+
+        const srcType   = op.source_asset_type || "native";
+        sourceAsset = normalizeAsset(
+          srcType === "native" ? "XLM" : (op.source_asset_code || "XLM"),
+          srcType === "native" ? null  : (op.source_asset_issuer || null),
+          srcType,
+        );
+        sourceAmount = op.source_amount || op.source_max || null;
+      }
+
+      // ── Asset code / issuer filter ────────────────────────────────────
+      if (filterCode) {
+        // Check both destination and source asset (for path payments)
+        const destMatch = destAssetCode === filterCode;
+        const srcMatch  = sourceAsset && sourceAsset.code === filterCode;
+        if (!destMatch && !srcMatch) continue;
+
+        // If assetIssuer is also specified, narrow further
+        if (filterIssuer) {
+          const destIssuerMatch = destMatch  && destAssetIssuer === filterIssuer;
+          const srcIssuerMatch  = srcMatch   && sourceAsset.issuer === filterIssuer;
+          if (!destIssuerMatch && !srcIssuerMatch) continue;
+        }
+      }
+
+      const item = {
+        paymentId:       op.id,
+        type:            op.type,
+        from,
+        to,
+        asset:           normalizeAsset(destAssetCode, destAssetIssuer, destAssetType),
+        amount,
+        createdAt:       toISOTimestamp(op.created_at),
         transactionHash: op.transaction_hash,
       };
-    });
+
+      if (sourceAsset !== undefined) {
+        item.sourceAsset  = sourceAsset;
+        item.sourceAmount = sourceAmount;
+      }
+
+      payments.push(item);
+    }
 
     // Apply ?startDate / ?endDate filter on createdAt
     const filteredOps = paymentOps.filter((p) => {

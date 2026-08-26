@@ -380,11 +380,14 @@ export class AccountModule {
   /**
    * Get all trustlines for an account with TOML metadata resolved from issuer home domains.
    *
-   * @param id - Stellar account public key.
+   * Calls `GET /account/:id/trustlines` with an optional `asset_code` query param.
+   *
+   * @param id - Stellar account public key (non-empty string).
    * @param options - Optional filtering options.
    * @param options.assetCode - Filter trustlines by asset code (e.g. "USDC").
-   * @returns Resolves to an array of trustline entries.
-   * @throws {StellarKitError} On non-2xx response.
+   * @returns Resolves to a typed `TrustlineEntry[]` array.
+   * @throws {StellarKitError} With `type: "AccountNotFound"` when the account does not exist (404).
+   * @throws {StellarKitError} On any other non-2xx API response.
    *
    * @example
    * const trustlines = await account.getTrustlines("GAAZI4...");
@@ -394,11 +397,24 @@ export class AccountModule {
     id: string,
     options?: { assetCode?: string },
   ): Promise<TrustlineEntry[]> {
-    const params = new URLSearchParams();
-    if (options?.assetCode) params.set("asset_code", options.assetCode);
-    const query = params.toString();
-    const path = `/account/${id}/trustlines${query ? `?${query}` : ""}`;
-    return this._get<TrustlineEntry[]>(path);
+    if (!id || typeof id !== "string" || id.trim() === "") {
+      throw new StellarKitError("id is required and must be a non-empty string", 400, "ValidationError");
+    }
+    const params: Record<string, string | number | undefined> = {
+      asset_code: options?.assetCode,
+    };
+    try {
+      return await this._get<TrustlineEntry[]>(`/account/${id}/trustlines`, params);
+    } catch (err) {
+      if (err instanceof StellarKitError && err.status === 404) {
+        throw new StellarKitError(
+          err.message || `Account ${id} was not found.`,
+          404,
+          "AccountNotFound",
+        );
+      }
+      throw err;
+    }
   }
 
   /**
