@@ -1101,7 +1101,7 @@ router.get("/:id/trades", async (req, res, next) => {
     validateAccountId(id);
 
     const { limit, order, cursor } = parsePaginationParams(req.query);
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true;
 
     // --- ?startDate / ?endDate validation ---
     let startDate;
