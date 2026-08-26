@@ -48,6 +48,7 @@ This project is ideal for:
 - [Response Format Guide](docs/response-format.md) - Standard response envelopes, pagination, and data formats
 - [Streaming Guide](docs/streaming.md) - SSE and WebSocket streaming endpoints, event payloads, reconnection, and clean close handling
 - [Caching Strategy](docs/caching-strategy.md) - Per-endpoint cache TTLs and configuration
+- [Logging Guide](docs/logging.md) - Log levels, configuration, structured log entry fields, JSON parsing, and production monitoring
 - [Error Reference](docs/error-reference.md) - All error types, status codes, and suggested fixes
 - [Error Codes](docs/error-codes.md) - HTTP status code reference with descriptions, scenarios, and sample responses
 - [Rate Limiting](docs/rate-limiting.md) - Default limits, configuration, response headers, and retry strategies
