@@ -23,6 +23,7 @@ const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
+const metricsService = require("./services/metrics");
 
 const networkStatusRouter = require("./routes/networkStatus");
 const webhooksRouter = require("./routes/webhooks");
@@ -38,6 +39,8 @@ const utilsRouter = require("./routes/utils");
 const stellarTomlRouter = require("./routes/stellarToml");
 const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
+const metricsRouter = require("./routes/metrics");
+const webhooksRouter = require("./routes/webhooks");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
@@ -181,6 +184,12 @@ app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
 // ── Rate Limiting ───────────────────────────────────────────────────────────
 app.use(rateLimiter);
 
+// ── Metrics request counter ─────────────────────────────────────────────────
+app.use((req, res, next) => {
+  metricsService.incrementRequests();
+  next();
+});
+
 // ── Input Sanitization ──────────────────────────────────────────────────────
 app.use(sanitize);
 app.use(coerceQueryParams);
@@ -230,6 +239,8 @@ app.use("/utils", utilsRouter);
 app.use("/stellar-toml", stellarTomlRouter);
 app.use("/claimable-balances", etagMiddleware, claimableBalancesRouter);
 app.use("/cache", cacheStatsRouter);
+app.use("/metrics", metricsRouter);
+app.use("/webhooks", webhooksRouter);
 app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
