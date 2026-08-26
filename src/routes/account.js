@@ -1202,6 +1202,23 @@ router.get("/:id/payments", async (req, res, next) => {
 
 /**
  * GET /account/:id/trades
+ *
+ * Returns a normalised, paginated list of trades executed by the account.
+ *
+ * Query params:
+ *   - limit, order, cursor       — standard pagination
+ *   - startDate, endDate         — optional ISO 8601 range filter on ledgerCloseTime
+ *   - fresh (boolean)            — bypasses the cache when set to "true"
+ *
+ * Each entry includes tradeId, ledgerCloseTime, selling, buying, soldAmount,
+ * boughtAmount, price, and offerId (per the account's side of the trade),
+ * alongside the raw base/counter fields for backward compatibility.
+ * Asset fields follow the standard { code, issuer, type } shape, and
+ * soldAmount/boughtAmount/price are seven-decimal strings.
+ *
+ * Returns:
+ *   - 200: { success: true, data: { trades, items, total, limit, cursor } }
+ *   - 404: Account does not exist
  */
 router.get("/:id/trades", async (req, res, next) => {
   try {
@@ -1295,6 +1312,7 @@ router.get("/:id/trades", async (req, res, next) => {
       : null;
 
     const data = {
+      trades,
       items: trades,
       total: trades.length,
       limit,
