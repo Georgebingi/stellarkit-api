@@ -1,90 +1,142 @@
 const express = require("express");
-const router = express.Router();
-const webhookService = require("../services/webhookService");
-const { success } = require("../utils/response");
-const { validateAccountId } = require("../utils/validators");
+const router  = express.Router();
+const webhookStore = require("../services/webhookStore");
+const { success }  = require("../utils/response");
+const StellarKitError = require("../utils/StellarKitError");
+
+/**
+ * Validate a webhook registration request body.
+ * Returns an error message string when invalid, null when valid.
+ *
+ * @param {object} body
+ * @returns {string|null}
+ */
+function validateRegistration(body) {
+  if (!body || typeof body !== "object") {
+    return "Request body is required.";
+  }
+  if (!body.url || typeof body.url !== "string" || body.url.trim() === "") {
+    return "url is required and must be a non-empty string.";
+  }
+  // Simple URL format check — must start with http:// or https://
+  if (!/^https?:\/\/.+/.test(body.url.trim())) {
+    return "url must be a valid HTTP or HTTPS URL.";
+  }
+  if (!Array.isArray(body.events) || body.events.length === 0) {
+    return "events must be a non-empty array of event type strings.";
+  }
+  if (body.events.some((e) => typeof e !== "string" || e.trim() === "")) {
+    return "Each event in the events array must be a non-empty string.";
+  }
+  return null;
+}
 
 /**
  * POST /webhooks
- * Register a webhook for an account.
+ *
+ * Register a new webhook. The caller provides a callback URL and the list of
+ * event types to subscribe to.  A unique webhookId is assigned and returned.
  *
  * Request body:
  *   {
- *     "accountId": "G...",
- *     "url": "https://example.com/webhook",
- *     "events": ["trustline.changed"]  // optional, defaults to ["trustline.changed"]
+ *     "url":    "https://example.com/hooks",
+ *     "events": ["payment", "account_funded"]
  *   }
+ *
+ * Response 201:
+ *   {
+ *     "success": true,
+ *     "data": {
+ *       "webhookId":    "wh_...",
+ *       "url":          "https://example.com/hooks",
+ *       "events":       ["payment", "account_funded"],
+ *       "registeredAt": "2026-08-26T00:00:00.000Z"
+ *     }
+ *   }
+ *
+ * Response 400: { "success": false, "error": { "type": "ValidationError", ... } }
  */
 router.post("/", (req, res, next) => {
   try {
-    const { accountId, url, events } = req.body;
-
-    if (!accountId) {
-      const err = new Error("accountId is required");
-      err.isValidation = true;
-      err.status = 400;
-      throw err;
+    const validationError = validateRegistration(req.body);
+    if (validationError) {
+      return next(new StellarKitError(validationError, 400, "ValidationError"));
     }
 
-    if (!url) {
-      const err = new Error("url is required");
-      err.isValidation = true;
-      err.status = 400;
-      throw err;
-    }
+    const entry = webhookStore.register({
+      url:    req.body.url.trim(),
+      events: req.body.events.map((e) => String(e).trim()),
+    });
 
-    validateAccountId(accountId);
-
-    // Validate URL format
-    try {
-      new URL(url);
-    } catch (err) {
-      const validationErr = new Error("Invalid webhook URL");
-      validationErr.isValidation = true;
-      validationErr.status = 400;
-      throw validationErr;
-    }
-
-    const webhook = webhookService.registerWebhook(accountId, url, events);
-    return success(res, webhook, { statusCode: 201 });
+    return res.status(201).json({ success: true, data: entry });
   } catch (err) {
     next(err);
   }
 });
 
 /**
- * GET /webhooks/:accountId
- * Get all webhooks for an account.
+ * GET /webhooks
+ *
+ * List all registered webhooks.
+ *
+ * Response 200:
+ *   {
+ *     "success": true,
+ *     "data": {
+ *       "webhooks": [...],
+ *       "total": 2
+ *     }
+ *   }
  */
-router.get("/:accountId", (req, res, next) => {
-  try {
-    const { accountId } = req.params;
-    validateAccountId(accountId);
-
-    const webhooks = webhookService.getWebhooksForAccount(accountId);
-    return success(res, { accountId, webhooks, count: webhooks.length });
-  } catch (err) {
-    next(err);
-  }
+router.get("/", (req, res) => {
+  const webhooks = webhookStore.list();
+  return success(res, { webhooks, total: webhooks.length });
 });
 
 /**
- * DELETE /webhooks/:accountId/:webhookId
- * Delete a webhook.
+ * DELETE /webhooks/:webhookId
+ *
+ * Unregister a webhook by its ID.  Verifies the webhook exists before removal.
+ *
+ * Response 200 (success):
+ *   {
+ *     "success": true,
+ *     "data": {
+ *       "webhookId":    "wh_...",
+ *       "unregistered": true
+ *     }
+ *   }
+ *
+ * Response 404 (not found):
+ *   {
+ *     "success": false,
+ *     "error": {
+ *       "type":    "WebhookNotFound",
+ *       "message": "Webhook 'wh_...' was not found."
+ *     }
+ *   }
  */
-router.delete("/:accountId/:webhookId", (req, res, next) => {
+router.delete("/:webhookId", (req, res, next) => {
   try {
-    const { accountId, webhookId } = req.params;
-    validateAccountId(accountId);
+    const { webhookId } = req.params;
 
-    const deleted = webhookService.deleteWebhook(accountId, parseInt(webhookId));
-    if (!deleted) {
-      const err = new Error("Webhook not found");
-      err.status = 404;
-      throw err;
+    // Verify the webhook exists before attempting removal
+    const existing = webhookStore.find(webhookId);
+    if (!existing) {
+      return next(
+        new StellarKitError(
+          `Webhook '${webhookId}' was not found.`,
+          404,
+          "WebhookNotFound",
+          null,
+          "Verify the webhookId is correct. Use GET /webhooks to list all registered webhooks.",
+        ),
+      );
     }
 
-    return success(res, { deleted: true });
+    webhookStore.remove(webhookId);
+
+    return success(res, { webhookId, unregistered: true });
   } catch (err) {
     next(err);
   }
