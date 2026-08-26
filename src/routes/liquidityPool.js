@@ -10,6 +10,8 @@ const { parsePaginationParams } = require("../utils/pagination");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
+const { formatAmount } = require("../utils/formatAmount");
+const StellarKitError = require("../utils/StellarKitError");
 
 function makeAssetQueryValidationError(field, value) {
   const err = new Error(
@@ -68,6 +70,37 @@ function tradeAssetMatchesFilter(trade, side, filter) {
   const assetCode = String(trade[`${side}_asset_code`] || "").toUpperCase();
   const assetIssuer = trade[`${side}_asset_issuer`] || null;
   return assetCode === filter.code && assetIssuer === filter.issuer;
+}
+
+function mapLiquidityPool(pool) {
+  const reserveA = pool.reserves[0];
+  const reserveB = pool.reserves[1];
+
+  return {
+    poolId: pool.id,
+    fee: pool.fee_bp,
+    totalShares: formatAmount(pool.total_shares),
+    reserveA: {
+      asset: normalizeAssetFromString(reserveA.asset),
+      amount: formatAmount(reserveA.amount),
+    },
+    reserveB: {
+      asset: normalizeAssetFromString(reserveB.asset),
+      amount: formatAmount(reserveB.amount),
+    },
+    totalTrustlines: Number(pool.total_trustlines),
+    lastModifiedLedger: pool.last_modified_ledger,
+  };
+}
+
+function poolNotFoundError(id) {
+  return new StellarKitError(
+    `Liquidity pool '${id}' was not found.`,
+    404,
+    "LiquidityPoolNotFound",
+    null,
+    "Verify the pool ID is a valid 64-character hex liquidity pool identifier.",
+  );
 }
 
 /**
@@ -279,6 +312,32 @@ router.get("/:id/reserve-ratio", async (req, res, next) => {
       driftFromEqual: `${driftFromEqual.toFixed(2)}%`,
       driftRating,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /liquidity-pools/:id
+ *
+ * Returns live Horizon data for a constant-product liquidity pool, mapped to
+ * the normalised StellarKit shape.
+ */
+router.get("/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    let pool;
+    try {
+      pool = await server.liquidityPools().liquidityPoolId(id).call();
+    } catch (err) {
+      if (err.response && err.response.status === 404) {
+        return next(poolNotFoundError(id));
+      }
+      throw err;
+    }
+
+    return success(res, mapLiquidityPool(pool));
   } catch (err) {
     next(err);
   }
