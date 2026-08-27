@@ -40,6 +40,11 @@ curl https://your-stellarkit-instance.example.com/soroban/contract/CDLZFC3SYJYDZ
   "success": true,
   "data": {
     "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "wasmHash": null,
+    "deployer": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    "deployedAt": "2024-06-01T12:00:00.000Z",
+    "deployedLedger": 689,
+    "isExpired": false,
     "executable": {
       "type": "stellar_asset",
       "wasmHash": null
@@ -55,8 +60,13 @@ curl https://your-stellarkit-instance.example.com/soroban/contract/CDLZFC3SYJYDZ
 | Field | Description |
 | --- | --- |
 | `contractId` | The contract address you queried. |
+| `wasmHash` | Top-level hex-encoded SHA-256 hash of the contract's WASM binary (64 characters), or `null` for Stellar Asset Contract executables. |
+| `deployer` | Stellar account (`G...`) that deployed the contract, or `null` if deployment metadata is unavailable. |
+| `deployedAt` | ISO 8601 timestamp of the deployment transaction, or `null` when unknown. |
+| `deployedLedger` | Ledger sequence number in which the contract was deployed, or `null` when unknown. |
+| `isExpired` | `true` when the current ledger is past `expiryLedger`; otherwise `false`. |
 | `executable.type` | `"wasm"` for a contract backed by uploaded WASM code, or `"stellar_asset"` for the built-in Stellar Asset Contract executable used by classic Stellar assets. |
-| `executable.wasmHash` | The hex-encoded SHA-256 hash of the contract's WASM binary, or `null` when `executable.type` is `"stellar_asset"`. |
+| `executable.wasmHash` | Same as top-level `wasmHash` — the hex-encoded SHA-256 hash of the contract's WASM binary, or `null` when `executable.type` is `"stellar_asset"`. |
 | `lastModifiedLedger` | The ledger sequence number the instance entry was last written in. |
 | `expiryLedger` | The ledger sequence number until which the instance entry is guaranteed to stay live on the ledger (its TTL), or `null` if unavailable. Once the network passes this ledger, the entry is archived and must be restored before it can be read or invoked again. |
 

@@ -6,6 +6,8 @@ jest.mock("axios");
 describe("Webhook Delivery Service", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Zero out retry delays so tests run instantly without real waiting
+    webhookDelivery._retryDelays = [0, 0, 0];
   });
 
   describe("triggerWebhooks", () => {
@@ -66,7 +68,7 @@ describe("Webhook Delivery Service", () => {
       expect(axios.post).not.toHaveBeenCalled();
     });
 
-    it("should retry failed deliveries", async () => {
+    it("should retry failed deliveries and succeed on attempt 3", async () => {
       const webhooks = [{ id: "webhook_1", url: "https://example.com/webhook1" }];
       const payload = { event: "payment.received" };
 
@@ -83,7 +85,8 @@ describe("Webhook Delivery Service", () => {
       expect(axios.post).toHaveBeenCalledTimes(3);
     });
 
-    it("should fail after max retries", async () => {
+    // Updated for new spec: 3 retries = 4 total attempts (attempt number = 4 on final failure)
+    it("should fail after max retries (3 retries = 4 total attempts)", async () => {
       const webhooks = [{ id: "webhook_1", url: "https://example.com/webhook1" }];
       const payload = { event: "payment.received" };
 
@@ -93,8 +96,9 @@ describe("Webhook Delivery Service", () => {
 
       expect(results[0].success).toBe(false);
       expect(results[0].error).toBe("Network error");
-      expect(results[0].attempt).toBe(3);
-      expect(axios.post).toHaveBeenCalledTimes(3);
+      // 4 total attempts: 1 initial + 3 retries
+      expect(results[0].attempt).toBe(4);
+      expect(axios.post).toHaveBeenCalledTimes(4);
     });
 
     it("should include correct headers in webhook request", async () => {
@@ -150,6 +154,7 @@ describe("Webhook Delivery Service", () => {
       expect(result.attempt).toBe(1);
     });
 
+    // Updated: 3 retries = final attempt is 4, not 3
     it("should return error result on failed delivery after retries", async () => {
       const webhook = { id: "webhook_1", url: "https://example.com/webhook" };
       const payload = { event: "payment.received" };
@@ -161,7 +166,8 @@ describe("Webhook Delivery Service", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Connection refused");
-      expect(result.attempt).toBe(3);
+      // 1 initial + 3 retries = attempt 4 on permanent failure
+      expect(result.attempt).toBe(4);
     });
 
     it("should track attempt number in result", async () => {

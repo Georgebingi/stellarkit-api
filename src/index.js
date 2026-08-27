@@ -18,6 +18,7 @@ const { getHorizonHealth } = require("./utils/horizonHealth");
 const cacheTTL = require("./config/cacheConfig");
 
 const rateLimiter = require("./middleware/rateLimiter");
+const restrictHttpMethods = require("./middleware/restrictHttpMethods");
 const contentTypeValidator = require("./middleware/contentTypeValidator");
 const bodySizeLimit = require("./middleware/bodySizeLimit");
 const errorHandler = require("./middleware/errorHandler");
@@ -25,6 +26,7 @@ const requestIdMiddleware = require("./middleware/requestId");
 const requestLogger = require("./middleware/requestLogger");
 const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
+const rejectDuplicateQueryParams = require("./middleware/rejectDuplicateQueryParams");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
 const metricsService = require("./services/metrics");
@@ -165,6 +167,8 @@ async function warmStartupCaches({
 
 // ── Security & Parsing ──────────────────────────────────────────────────────
 app.use(helmet());
+// Reject TRACE/CONNECT/OPTIONS/PUT/HEAD/etc. before CORS or route handlers
+app.use(restrictHttpMethods);
 // Skip compression for responses smaller than 1 KB — gzip headers alone can exceed tiny payloads
 app.use(compression({ threshold: 1024 }));
 app.use(cors());
@@ -172,6 +176,7 @@ app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(contentTypeValidator);
 app.use(bodySizeLimit);
+app.use(rejectDuplicateQueryParams);
 app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
 
 // ── Rate Limiting ───────────────────────────────────────────────────────────
@@ -244,7 +249,6 @@ app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
 app.use("/transaction", etagMiddleware, transactionEffectsRouter);
-app.use("/webhooks", webhooksRouter);
 
 // ── Root
 app.get("/", (req, res) => {

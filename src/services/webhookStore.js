@@ -4,10 +4,12 @@
  * Stores webhook registrations in a plain Map keyed by webhookId.
  * Each entry has the shape:
  *   {
- *     webhookId:   string,   // UUID-like unique identifier
- *     url:         string,   // Callback URL to deliver events to
- *     events:      string[], // Event types this webhook subscribes to
- *     registeredAt: string,  // ISO 8601 creation timestamp
+ *     webhookId:    string,   // UUID-like unique identifier
+ *     url:          string,   // Callback URL to deliver events to
+ *     events:       string[], // Event types this webhook subscribes to
+ *     accountId:    string|null, // Optional Stellar account this webhook is scoped to
+ *     createdAt:    string,   // ISO 8601 creation timestamp
+ *     registeredAt: string,   // Alias of createdAt (backward compatible)
  *   }
  *
  * This is an in-process store — data is lost on server restart.
@@ -44,13 +46,20 @@ class WebhookStore {
   /**
    * Register a new webhook and return the stored entry.
    *
-   * @param {{ url: string, events: string[] }} params
-   * @returns {{ webhookId: string, url: string, events: string[], registeredAt: string }}
+   * @param {{ url: string, events: string[], accountId?: string|null }} params
+   * @returns {{ webhookId: string, url: string, events: string[], accountId: string|null, createdAt: string, registeredAt: string }}
    */
-  register({ url, events }) {
+  register({ url, events, accountId }) {
     const webhookId    = generateId();
-    const registeredAt = new Date().toISOString();
-    const entry        = { webhookId, url, events: Array.isArray(events) ? events : [], registeredAt };
+    const createdAt    = new Date().toISOString();
+    const entry        = {
+      webhookId,
+      url,
+      events: Array.isArray(events) ? events : [],
+      accountId: accountId || null,
+      createdAt,
+      registeredAt: createdAt,
+    };
     this._store.set(webhookId, entry);
     return entry;
   }
@@ -76,12 +85,18 @@ class WebhookStore {
   }
 
   /**
-   * Return all registered webhooks as an array.
+   * Return registered webhooks as an array.
+   * When `accountId` is provided, only webhooks scoped to that account are returned.
    *
+   * @param {string} [accountId]
    * @returns {object[]}
    */
-  list() {
-    return Array.from(this._store.values());
+  list(accountId) {
+    const all = Array.from(this._store.values());
+    if (!accountId) {
+      return all;
+    }
+    return all.filter((entry) => entry.accountId === accountId);
   }
 
   /**
