@@ -1,12 +1,12 @@
 /**
  * Centralised error handler middleware.
  * Formats Horizon / Stellar SDK errors into consistent JSON responses.
- * All non-Horizon errors are wrapped in StellarKitError for consistency.
+ * All non-Horizon errors are wrapped in StellaKitError for consistency.
  */
 const logger = require("../utils/logger");
 const { translateHorizonError } = require("../utils/horizonErrors");
 const { mapHorizonErrorToStatus } = require("../utils/horizonStatusMapper");
-const StellarKitError = require("../utils/StellarKitError");
+const StellaKitError = require("../utils/StellaKitError");
 const {
   HORIZON_TIMEOUT_MESSAGE,
   HORIZON_TIMEOUT_SUGGESTION,
@@ -90,8 +90,7 @@ function pickMostSpecificResultCode(result_codes) {
  * (i.e. the network accepted the request but the transaction itself failed).
  */
 function isTransactionSubmissionFailure(horizonError) {
-  return (
-    horizonError &&
+  return (horizonError &&
     horizonError.type &&
     typeof horizonError.type === "string" &&
     horizonError.type.includes("transaction_failed")
@@ -150,7 +149,7 @@ function withRequestId(body, req) {
 
 function errorHandler(err, req, res, next) {
   if (isConnectionError(err)) {
-    const ske = new StellarKitError(
+    const ske = new StellaKitError(
       "Unable to connect to the Stellar Horizon node.",
       503,
       "HorizonUnavailable",
@@ -167,7 +166,7 @@ function errorHandler(err, req, res, next) {
   if (err?.isOfferNotFound || isOfferNotFoundError(err)) {
     const offerId = err?.offerId || "unknown";
     const message = `Offer '${offerId}' was not found on the Stellar ${NETWORK} network.`;
-    const ske = new StellarKitError(
+    const ske = new StellaKitError(
       message,
       404,
       "OfferNotFound",
@@ -207,7 +206,7 @@ function errorHandler(err, req, res, next) {
     const status = mappedStatus ?? err.response.status ?? 400;
 
     if (isTransactionSubmissionFailure(horizonError)) {
-      const body = buildTransactionSubmissionFailedError(horizonError);
+      const body = buildTransactionSubmissionFailedError horizonError);
       logError(status, req, body.message);
       return errorResponse(res, status, withRequestId({ success: false, error: body }, req));
     }
@@ -238,8 +237,8 @@ function errorHandler(err, req, res, next) {
     return errorResponse(res, status, withRequestId(body, req));
   }
 
-  // StellarKitError instances — already structured
-  if (err instanceof StellarKitError) {
+  // StellaKitError instances — already structured
+  if (err instanceof StellaKitError) {
     logError(err.statusCode, req, err.message);
     return errorResponse(res, err.statusCode, withRequestId({
       success: false,
@@ -263,7 +262,7 @@ function errorHandler(err, req, res, next) {
   // Payload too large errors from body parsers
   if (err.type === "entity.too.large" || err.status === 413) {
     const maxBodySize = process.env.MAX_BODY_SIZE || "10kb";
-    const ske = new StellarKitError(
+    const ske = new StellaKitError(
       `Payload too large. Maximum request body size is ${maxBodySize}.`,
       413,
       "PayloadTooLargeError",
@@ -356,99 +355,36 @@ function errorHandler(err, req, res, next) {
       error: {
         type: "InvalidAccountId",
         message: err.message,
-        suggestion:
-          err.suggestion ||
-          "Account addresses start with G and are 56 characters long.",
+        suggestion: err.suggestion,
       },
     }, req));
   }
 
-  // InvalidAsset errors — thrown by validateAsset(code, issuer)
-  if (err.isInvalidAsset) {
+  // InvalidTransactionHash errors — thrown by validateTransactionHash(hash)
+  if (err.isInvalidTransactionHash) {
     logError(400, req, err.message);
     return errorResponse(res, 400, withRequestId({
       success: false,
       error: {
-        type: "InvalidAsset",
+        type: "InvalidTransactionHash",
         message: err.message,
-        suggestion: err.suggestion || null,
+        suggestion: err.suggestion,
       },
     }, req));
   }
 
-  // InvalidCursor errors — thrown by validateCursor()
-  if (err.isInvalidCursor) {
-    logError(400, req, err.message);
-    return errorResponse(res, 400, withRequestId({
-      success: false,
-      error: {
-        type: "InvalidCursor",
-        message: err.message,
-        suggestion: err.suggestion ||
-          "Use the cursor returned in the previous response.",
-      },
-    }, req));
-  }
-
-  // InvalidLimit errors — thrown by validateLimit()
-  if (err.isInvalidLimit) {
-    logError(400, req, err.message);
-    return errorResponse(res, 400, withRequestId({
-      success: false,
-      error: {
-        type: "InvalidLimit",
-        message: "limit must be a number between 1 and 100.",
-        suggestion: "Provide a valid integer for the limit parameter, e.g. ?limit=20",
-      },
-    }, req));
-  }
-
-  // Horizon timeout errors (Horizon node did not respond in time)
-  if (isHorizonTimeoutError(err)) {
-    logError(504, req, HORIZON_TIMEOUT_MESSAGE);
-    return errorResponse(res, 504, withRequestId({
-      success: false,
-      error: {
-        type: "HorizonTimeout",
-        message: HORIZON_TIMEOUT_MESSAGE,
-        suggestion: HORIZON_TIMEOUT_SUGGESTION,
-      },
-    }, req));
-  }
-
-  // Validation errors (thrown manually)
-  if (err.isValidation) {
-    const ske = new StellarKitError(
-      err.message,
-      400,
-      "ValidationError",
-      null,
-      err.expectedFormat ? `Expected format: ${err.expectedFormat}` : null
-    );
-    logError(400, req, err.message);
-    return errorResponse(res, 400, withRequestId({
-      success: false,
-      error: {
-        ...ske.toJSON(),
-        field: err.field,
-        receivedValue: err.receivedValue,
-        expectedFormat: err.expectedFormat,
-      },
-    }, req));
-  }
-
-  // Generic errors
-  const status = err.statusCode || err.status || 500;
-  const message =
-    process.env.NODE_ENV === "production"
-      ? "An unexpected error occurred."
-      : err.message;
-  const skeGeneric = new StellarKitError(message, status, "ServerError", null, err.suggestion || null);
-  logError(status, req, err.message);
+  // Fallback for any other error
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || "Internal Server Error";
+  logError(status, req, message);
   return errorResponse(res, status, withRequestId({
     success: false,
-    error: skeGeneric.toJSON(),
+    error: {
+      type: err.type || "InternalError",
+      message,
+    },
   }, req));
 }
 
+// Export the middleware
 module.exports = errorHandler;
