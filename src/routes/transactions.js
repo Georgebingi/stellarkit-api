@@ -4,7 +4,7 @@ const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 const { server, NETWORK } = require("../config/stellar");
 const { success, toISOTimestamp } = require("../utils/response");
-const { validateAccountId } = require("../utils/validators");
+const { validateAccountId, validateTransactionHash } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { makeAccountNotFoundError } = require("../utils/errors");
 const { normalizeAsset } = require("../utils/asset");
@@ -32,7 +32,7 @@ function handleAccountNotFound(err, next, accountId) {
  * @param {string} id - Stellar account public key (G...)
  *
  * @example
- * GET /transactions/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN
+ * GET /transactions/GAAZI4TCR3TY5OJHCTJ2C4Q6SY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN
  * GET /transactions/GAAZI4...?limit=5&order=asc
  */
 
@@ -53,7 +53,7 @@ function handleAccountNotFound(err, next, accountId) {
  *
  * @returns {Promise<void>} Sends a JSON response:
  * {
- *   data: Array<{
+ *   data: Array<[
  *     id: string,
  *     hash: string,
  *     ledger: number,
@@ -68,7 +68,7 @@ function handleAccountNotFound(err, next, accountId) {
  *     memo: string | null,
  *     successful: boolean,
  *     envelopeXdr: string
- *   }>,
+ *   }],
  *   meta: {
  *     count: number,
  *     limit: number,
@@ -278,7 +278,7 @@ router.post("/batch-status", async (req, res, next) => {
     const { hashes } = req.body;
 
     if (!hashes || !Array.isArray(hashes)) {
-      const err = new Error("Property 'hashes' is required and must be an array.");
+      const err = new Error("property 'hashes' is required and must be an array.");
       err.isValidation = true;
       throw err;
     }
@@ -294,13 +294,8 @@ router.post("/batch-status", async (req, res, next) => {
     }
 
     // Validate each hash (64-character hex string)
-    const hashRegex = /^[0-9a-fA-F]{64}$/;
     for (const hash of hashes) {
-      if (!hashRegex.test(hash)) {
-        const err = new Error(`Invalid transaction hash: "${hash}". Must be a 64-character hex string.`);
-        err.isValidation = true;
-        throw err;
-      }
+      validateTransactionHash(hash);
     }
 
     // Perform lookups in parallel
