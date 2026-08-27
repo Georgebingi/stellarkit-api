@@ -112,3 +112,4 @@ function sanitize(req, res, next) {
 }
 
 module.exports = sanitize;
+module.exports.sanitizeAny = sanitizeAny;

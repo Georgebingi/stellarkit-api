@@ -3,10 +3,10 @@ const express = require("express");
 const helmet = require("helmet");
 const hpp = require("hpp");
 const cors = require("cors");
-const morgan = require("morgan");
 const compression = require("compression");
 
 const logger = require("./utils/logger");
+const { parseStellarAmount } = require("./utils/parseStellarAmount");
 const { setupWebSocket } = require("./websocket");
 const { server } = require("./config/stellar");
 const cacheService = require("./services/cache");
@@ -18,14 +18,19 @@ const contentTypeValidator = require("./middleware/contentTypeValidator");
 const bodySizeLimit = require("./middleware/bodySizeLimit");
 const errorHandler = require("./middleware/errorHandler");
 const requestIdMiddleware = require("./middleware/requestId");
+const requestLogger = require("./middleware/requestLogger");
 const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
+const metricsService = require("./services/metrics");
 
 const networkStatusRouter = require("./routes/networkStatus");
+const webhooksRouter = require("./routes/webhooks");
+const contractEventPoller = require("./services/contractEventPoller");
 const feeEstimateRouter = require("./routes/feeEstimate");
 const accountRouter = require("./routes/account");
+const accountsRouter = require("./routes/accounts");
 const transactionsRouter = require("./routes/transactions");
 const assetRouter = require("./routes/asset");
 const dexRouter = require("./routes/dex");
@@ -35,9 +40,12 @@ const utilsRouter = require("./routes/utils");
 const stellarTomlRouter = require("./routes/stellarToml");
 const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
+const metricsRouter = require("./routes/metrics");
+const webhooksRouter = require("./routes/webhooks");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
+const webhooksRouter = require("./routes/webhooks");
 
 const app = express();
 // Disable server identification header for security
@@ -45,6 +53,9 @@ app.disable("x-powered-by");
 const { normalizeAmountFields } = require("./utils/response");
 
 const PORT = process.env.PORT || 3000;
+
+// Captured once at process start so /health can report accurate uptime.
+const SERVER_STARTED_AT = new Date().toISOString();
 
 async function warmNetworkStatusCache({
   logger: customLogger = logger,
@@ -66,9 +77,9 @@ async function warmNetworkStatusCache({
     },
     fees: {
       baseFeeInStroops: latest.base_fee_in_stroops,
-      baseFeeInXLM: (latest.base_fee_in_stroops / 1e7).toFixed(7),
+      baseFeeInXLM: parseStellarAmount(latest.base_fee_in_stroops),
       basereserveInStroops: latest.base_reserve_in_stroops,
-      baseReserveInXLM: (latest.base_reserve_in_stroops / 1e7).toFixed(7),
+      baseReserveInXLM: parseStellarAmount(latest.base_reserve_in_stroops),
     },
     protocol: {
       version: latest.protocol_version,
@@ -96,34 +107,32 @@ async function warmFeeEstimateCache({
     perOperation: {
       economy: {
         stroops: parseInt(feeStats.fee_charged.min),
-        xlm: (parseInt(feeStats.fee_charged.min) / 1e7).toFixed(7),
+        xlm: parseStellarAmount(parseInt(feeStats.fee_charged.min)),
         description: "Minimum — may be slow during congestion",
       },
       standard: {
         stroops: recommended,
-        xlm: (recommended / 1e7).toFixed(7),
+        xlm: parseStellarAmount(recommended),
         description: "Recommended for most transactions",
       },
       priority: {
         stroops: priority,
-        xlm: (priority / 1e7).toFixed(7),
+        xlm: parseStellarAmount(priority),
         description: "Fast inclusion even during high network load",
       },
     },
     totalFee: {
       economy: {
         stroops: parseInt(feeStats.fee_charged.min) * operations,
-        xlm: ((parseInt(feeStats.fee_charged.min) * operations) / 1e7).toFixed(
-          7,
-        ),
+        xlm: parseStellarAmount(parseInt(feeStats.fee_charged.min) * operations),
       },
       standard: {
         stroops: recommended * operations,
-        xlm: ((recommended * operations) / 1e7).toFixed(7),
+        xlm: parseStellarAmount(recommended * operations),
       },
       priority: {
         stroops: priority * operations,
-        xlm: ((priority * operations) / 1e7).toFixed(7),
+        xlm: parseStellarAmount(priority * operations),
       },
     },
     networkStats: {
@@ -169,27 +178,19 @@ app.use(helmet());
 app.use(compression({ threshold: 1024 }));
 app.use(cors());
 app.use(requestIdMiddleware);
+app.use(requestLogger);
 app.use(contentTypeValidator);
 app.use(bodySizeLimit);
 app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
-app.use(
-  morgan(function (tokens, req, res) {
-    const requestId = req.requestId || "-";
-    return [
-      `[${requestId}]`,
-      tokens.method(req, res),
-      tokens.url(req, res),
-      tokens.status(req, res),
-      tokens.res(req, res, "content-length"),
-      "-",
-      tokens["response-time"](req, res),
-      "ms",
-    ].join(" ");
-  }),
-);
 
 // ── Rate Limiting ───────────────────────────────────────────────────────────
 app.use(rateLimiter);
+
+// ── Metrics request counter ─────────────────────────────────────────────────
+app.use((req, res, next) => {
+  metricsService.incrementRequests();
+  next();
+});
 
 // ── Input Sanitization ──────────────────────────────────────────────────────
 app.use(sanitize);
@@ -210,6 +211,9 @@ app.get("/health", (req, res) => {
       version: require("../package.json").version,
       timestamp: new Date().toISOString(),
       network: process.env.STELLAR_NETWORK || "testnet",
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      startedAt: SERVER_STARTED_AT,
     },
   });
 });
@@ -227,6 +231,7 @@ app.use("/fee-estimate", etagMiddleware, feeEstimateRouter);
 const accountCounterpartiesRouter = require("./routes/account.counterparties");
 app.use("/account", etagMiddleware, accountRouter);
 app.use("/account", etagMiddleware, accountCounterpartiesRouter);
+app.use("/accounts", accountsRouter);
 app.use("/transactions", transactionsRouter);
 app.use("/asset", etagMiddleware, assetRouter);
 app.use("/dex", etagMiddleware, dexRouter);
@@ -237,10 +242,13 @@ app.use("/utils", utilsRouter);
 app.use("/stellar-toml", stellarTomlRouter);
 app.use("/claimable-balances", etagMiddleware, claimableBalancesRouter);
 app.use("/cache", cacheStatsRouter);
+app.use("/metrics", metricsRouter);
+app.use("/webhooks", webhooksRouter);
 app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
 app.use("/transaction", etagMiddleware, transactionEffectsRouter);
+app.use("/webhooks", webhooksRouter);
 
 // ── Root
 app.get("/", (req, res) => {
@@ -260,6 +268,7 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/fee-estimate/surge-status", description: "Identify fee surge periods and get actionable recommendations" },
         { method: "GET", path: "/fee-estimate/trends", description: "Analyze fee trends across last 50 ledgers with statistical summary" },
         { method: "GET", path: "/account/:id", description: "Account details, balances, signers" },
+        { method: "GET", path: "/account/:id/reserve-breakdown", description: "Per-type breakdown of the minimum XLM reserve requirement" },
         { method: "GET", path: "/account/:id/age", description: "Account age and longevity metrics" },
         { method: "GET", path: "/account/:id/balances", description: "XLM and asset balances for an account" },
         { method: "GET", path: "/account/:id/sequence", description: "Current sequence number for an account" },
@@ -530,6 +539,11 @@ app.get("/", (req, res) => {
         },
         {
           method: "GET",
+          path: "/network/fee-percentiles",
+          description: "Fee percentile distribution (p10–p99) with accepted fee range and ledger sequence",
+        },
+        {
+          method: "GET",
           path: "/network/ledger-timing",
           description: "Analyze network ledger close time consistency",
         },
@@ -643,6 +657,7 @@ function startServer({
   });
 
   setupWebSocketHook(httpServer);
+  contractEventPoller.start();
   return httpServer;
 }
 

@@ -5,11 +5,11 @@ const { success } = require("../utils/response");
 const cacheService = require("../services/cache");
 const CACHE_TTL = parseInt(process.env.CACHE_TTL_MS || "5000", 10) / 1000; // seconds
 const cacheTTL = require("../config/cacheConfig");
+const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 
-const STROOPS_PER_XLM = 10_000_000;
+const { parseStellarAmount } = require("../utils/parseStellarAmount");
 
 const LEDGER_HISTORY_LIMIT = 5;
-const STROOP_DECIMALS = 7;
 
 const CAPACITY_USAGE_MAX = 1.0;
 const DEFAULT_MAX_TX_SET_SIZE = 1000;
@@ -65,19 +65,19 @@ router.get("/", async (req, res, next) => {
       perOperation: {
         economy: {
           stroops: parseInt(feeStats.fee_charged.min),
-          xlm: (parseInt(feeStats.fee_charged.min) / STROOPS_PER_XLM).toFixed(STROOP_DECIMALS),
+          xlm: parseStellarAmount(parseInt(feeStats.fee_charged.min)),
 
           description: "Minimum — may be slow during congestion",
         },
         standard: {
           stroops: recommended,
-          xlm: (recommended / STROOPS_PER_XLM).toFixed(STROOP_DECIMALS),
+          xlm: parseStellarAmount(recommended),
 
           description: "Recommended for most transactions",
         },
         priority: {
           stroops: priority,
-          xlm: (priority / STROOPS_PER_XLM).toFixed(STROOP_DECIMALS),
+          xlm: parseStellarAmount(priority),
 
           description: "Fast inclusion even during high network load",
         },
@@ -85,23 +85,19 @@ router.get("/", async (req, res, next) => {
       totalFee: {
         economy: {
           stroops: parseInt(feeStats.fee_charged.min) * operations,
-          xlm: (
-            (parseInt(feeStats.fee_charged.min) * operations) / STROOPS_PER_XLM
-          ).toFixed(STROOP_DECIMALS),
+          xlm: parseStellarAmount(
+            parseInt(feeStats.fee_charged.min) * operations
+          ),
 
         },
         standard: {
           stroops: recommended * operations,
-          xlm: (
-            (recommended * operations) / STROOPS_PER_XLM
-          ).toFixed(STROOP_DECIMALS),
+          xlm: parseStellarAmount(recommended * operations),
 
         },
         priority: {
           stroops: priority * operations,
-          xlm: (
-            (priority * operations) / STROOPS_PER_XLM
-          ).toFixed(STROOP_DECIMALS),
+          xlm: parseStellarAmount(priority * operations),
 
         },
       },
@@ -115,7 +111,7 @@ router.get("/", async (req, res, next) => {
         p99: feeStats.fee_charged.p99,
       },
       history: ledgerHistoryRecords.map((ledger) => ({
-        ledger: parseInt(ledger.sequence, 10),
+        ledger: formatLedgerSequence(ledger.sequence),
         baseFee: parseInt(ledger.base_fee_in_stroops || ledger.base_fee, 10) || 0,
         capacityUsage: parseFloat(
           Math.min(
@@ -249,7 +245,7 @@ router.get("/surge-status", async (req, res, next) => {
         parseFloat(usage.toFixed(4))
       ),
       suggestedFee,
-      suggestedFeeInXLM: (suggestedFee / STROOPS_PER_XLM).toFixed(STROOP_DECIMALS),
+      suggestedFeeInXLM: parseStellarAmount(suggestedFee),
 
       recommendation,
       currentNetworkStats: {

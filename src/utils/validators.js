@@ -74,6 +74,38 @@ function validateAccountId(accountId) {
   }
 }
 
+/**
+ * Validate a Stellar public key in lightweight boolean form.
+ *
+ * @param {string|null|undefined} address
+ * @returns {boolean}
+ */
+function validateStellarAddress(address) {
+  if (typeof address !== "string") return false;
+  const trimmed = address.trim();
+  if (!trimmed) return false;
+  if (!trimmed.startsWith("G")) return false;
+  if (trimmed.length !== 56) return false;
+  return StrKey.isValidEd25519PublicKey(trimmed);
+}
+
+/**
+ * Validate a credential type token.
+ *
+ * Allowed characters: letters, digits, underscore, dash, and dot.
+ * Maximum length: 64 characters.
+ *
+ * @param {string|null|undefined} type
+ * @returns {boolean}
+ */
+function validateCredentialType(type) {
+  if (typeof type !== "string") return false;
+  const trimmed = type.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > 64) return false;
+  return /^[A-Za-z0-9._-]+$/.test(trimmed);
+}
+
 function validateContractId(contractId) {
   if (!contractId) {
     throw makeValidationError(
@@ -154,7 +186,6 @@ function validateOrder(order) {
   const lowerOrder = String(order).toLowerCase();
   if (!["asc", "desc"].includes(lowerOrder)) {
     throw makeValidationError(
-      `Invalid order parameter: "${order}". Valid values are "asc" or "desc".`,
       qp("order", 'must be either "asc" or "desc".'),
       "order",
       order,
@@ -236,17 +267,57 @@ function validateAsset(code, issuer) {
  *   validateCursor(req.query.cursor);
  * }
  */
+const CURSOR_PATTERN = /^[A-Za-z0-9-]+$/;
+
 function validateCursor(cursor) {
-  if (cursor === null || cursor === undefined || typeof cursor !== "string" || cursor.trim() === "") {
+  if (
+    cursor === null ||
+    cursor === undefined ||
+    typeof cursor !== "string" ||
+    cursor.trim() === "" ||
+    !CURSOR_PATTERN.test(cursor)
+  ) {
     const err = new Error("The provided cursor value is invalid.");
     err.isInvalidCursor = true;
     err.type = "InvalidCursor";
-    err.suggestion =
-      "Use the cursor value returned in the previous response's data.cursor field.";
+    err.suggestion = "Use the cursor returned in the previous response.";
     err.status = 400;
     throw err;
   }
   return cursor;
+}
+
+/**
+ * Validate and parse an ISO 8601 date string supplied as a query parameter.
+ *
+ * Accepts any string that JavaScript's Date constructor recognises as a valid
+ * date (e.g. "2024-01-15", "2024-01-15T12:00:00Z"). Empty strings and values
+ * that produce an invalid Date are rejected with a structured 400 error.
+ *
+ * @param {string} value - Raw query-parameter value to validate.
+ * @param {string} field - Parameter name used in error messages (e.g. "startDate").
+ * @returns {Date} A valid Date object.
+ * @throws {Error} A validation error (isValidation = true, status = 400) when invalid.
+ */
+function validateISODate(value, field) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw makeValidationError(
+      `Query param '${field}' must be a valid ISO 8601 date string (e.g. "2024-01-15" or "2024-01-15T12:00:00Z").`,
+      field,
+      value,
+      "ISO 8601 date string"
+    );
+  }
+  const date = new Date(value);
+  if (isNaN(date.getTime())) {
+    throw makeValidationError(
+      `Query param '${field}' is not a valid date: "${String(value).slice(0, 50)}".`,
+      field,
+      value,
+      "ISO 8601 date string"
+    );
+  }
+  return date;
 }
 
 module.exports = {
@@ -257,4 +328,7 @@ module.exports = {
   validateOrder,
   validateAsset,
   validateCursor,
+  validateISODate,
+  validateStellarAddress,
+  validateCredentialType,
 };

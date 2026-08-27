@@ -9,6 +9,8 @@ const cacheTTL = require("../config/cacheConfig");
 const { parsePaginationParams } = require("../utils/pagination");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { normalizeAssetFromString, normalizeAsset } = require("../utils/asset");
+const { normalizeAssetFromString } = require("../utils/asset");
+const { isNativeAsset } = require("../utils/assetHelpers");
 
 function makeAssetQueryValidationError(field, value) {
   const err = new Error(
@@ -56,11 +58,11 @@ function parseAssetFilter(value, field) {
 function tradeAssetMatchesFilter(trade, side, filter) {
   const assetType = trade[`${side}_asset_type`];
 
-  if (filter.type === "native") {
-    return assetType === "native";
+  if (isNativeAsset(filter)) {
+    return isNativeAsset({ asset_type: assetType });
   }
 
-  if (assetType === "native") {
+  if (isNativeAsset({ asset_type: assetType })) {
     return false;
   }
 

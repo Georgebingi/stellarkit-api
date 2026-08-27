@@ -44,10 +44,12 @@ This project is ideal for:
 - [SDK Migration Guide](docs/sdk-migration.md) — migrating from the JavaScript SDK to the TypeScript SDK
 - [SDK README](sdk/README.md) — JavaScript client usage and method reference
 - [Getting Started Guide](docs/getting-started.md) - Set up the project and make your first API calls
+- [Production Deployment Guide](docs/deployment.md) - Deploy to production with Node.js, Docker, Railway, Render, or Fly.io
 - [API Design Guidelines](docs/api-design.md) - Design conventions and response patterns
 - [Response Format Guide](docs/response-format.md) - Standard response envelopes, pagination, and data formats
 - [Streaming Guide](docs/streaming.md) - SSE and WebSocket streaming endpoints, event payloads, reconnection, and clean close handling
 - [Caching Strategy](docs/caching-strategy.md) - Per-endpoint cache TTLs and configuration
+- [Logging Guide](docs/logging.md) - Log levels, configuration, structured log entry fields, JSON parsing, and production monitoring
 - [Error Reference](docs/error-reference.md) - All error types, status codes, and suggested fixes
 - [Error Codes](docs/error-codes.md) - HTTP status code reference with descriptions, scenarios, and sample responses
 - [Rate Limiting](docs/rate-limiting.md) - Default limits, configuration, response headers, and retry strategies
@@ -82,11 +84,11 @@ This project is ideal for:
 | ------ | ---- | ----------- | ------------ |
 | GET | `/account/:id` | Account details, balances, reserve breakdown | — |
 | GET | `/account/:id/age` | Account age and longevity metrics | — |
-| GET | `/account/:id/balances` | XLM and asset balances | — |
+| GET | `/account/:id/balances` | XLM and asset balances | `native`, `assets` |
 | GET | `/account/:id/native-balance` | Native XLM balance only | — |
 | GET | `/account/:id/asset-balance/:assetCode/:assetIssuer` | Balance for a specific asset trustline | — |
 | GET | `/account/:id/sequence` | Current sequence number | — |
-| GET | `/account/:id/trustlines` | Trustlines with TOML asset metadata resolved | `assetCode` |
+| GET | `/account/:id/trustlines` | Trustlines with TOML asset metadata resolved | `assetCode`, `sponsored` |
 | GET | `/account/:id/payments` | Payment and create_account operations | `limit`, `order`, `cursor`, `assetCode`, `assetIssuer` |
 | GET | `/account/:id/trades` | DEX trades for the account | `limit`, `order`, `cursor`, `fresh` |
 | GET | `/account/:id/offers` | Open DEX offers for an account | `limit`, `cursor` |
@@ -562,7 +564,12 @@ curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJT
 
 ### `GET /account/:id/trustlines`
 
-Returns all trustlines for the account with TOML metadata resolved from the issuer's home domain. Filter by asset code with `?assetCode=`.
+Returns all trustlines for the account with TOML metadata resolved from the issuer's home domain. Filter by asset code with `?assetCode=`, or by sponsorship status with `?sponsored=`.
+
+| Param | Type | Required | Default | Description |
+| ----- | ---- | -------- | ------- | ----------- |
+| `assetCode` | string | No | None | Case-insensitive asset code filter. |
+| `sponsored` | boolean | No | None | `true` returns only trustlines sponsored by another account; `false` returns only unsponsored trustlines. Omitted returns all. |
 
 ```bash
 # All trustlines
@@ -570,6 +577,9 @@ curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJT
 
 # Filter to USDC only
 curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trustlines?assetCode=USDC"
+
+# Only sponsored trustlines
+curl -X GET "http://localhost:3000/account/GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN/trustlines?sponsored=true"
 ```
 
 ### `GET /account/:id/summary`
