@@ -104,6 +104,24 @@ function makeTomlFetchFailedError(issuer) {
   return err;
 }
 
+/**
+ * Creates a structured LiquidityPoolNotFound error for Horizon 404 responses.
+ *
+ * @param {string} poolId - Liquidity pool ID (64-char hex string) that was not found
+ * @param {string} network - Network name ("testnet" or "mainnet")
+ * @returns {Error}
+ */
+function makeLiquidityPoolNotFoundError(poolId, network) {
+  const err = new Error(
+    `Liquidity pool '${poolId}' was not found on the Stellar ${network} network.`
+  );
+  err.isLiquidityPoolNotFound = true;
+  err.poolId = poolId;
+  err.network = network;
+  err.status = 404;
+  return err;
+}
+
 module.exports = {
   HORIZON_TIMEOUT_MESSAGE,
   HORIZON_TIMEOUT_SUGGESTION,
@@ -113,4 +131,5 @@ module.exports = {
   makeAssetNotFoundError,
   makeTrustlineNotFoundError,
   makeTomlFetchFailedError,
+  makeLiquidityPoolNotFoundError,
 };

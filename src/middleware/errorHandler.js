@@ -1,12 +1,12 @@
 /**
  * Centralised error handler middleware.
  * Formats Horizon / Stellar SDK errors into consistent JSON responses.
- * All non-Horizon errors are wrapped in StellaKitError for consistency.
+ * All non-Horizon errors are wrapped in StellarKitError for consistency.
  */
 const logger = require("../utils/logger");
 const { translateHorizonError } = require("../utils/horizonErrors");
 const { mapHorizonErrorToStatus } = require("../utils/horizonStatusMapper");
-const StellaKitError = require("../utils/StellaKitError");
+const StellarKitError = require("../utils/StellarKitError");
 const {
   HORIZON_TIMEOUT_MESSAGE,
   HORIZON_TIMEOUT_SUGGESTION,
@@ -149,7 +149,7 @@ function withRequestId(body, req) {
 
 function errorHandler(err, req, res, next) {
   if (isConnectionError(err)) {
-    const ske = new StellaKitError(
+    const ske = new StellarKitError(
       "Unable to connect to the Stellar Horizon node.",
       503,
       "HorizonUnavailable",
@@ -166,7 +166,7 @@ function errorHandler(err, req, res, next) {
   if (err?.isOfferNotFound || isOfferNotFoundError(err)) {
     const offerId = err?.offerId || "unknown";
     const message = `Offer '${offerId}' was not found on the Stellar ${NETWORK} network.`;
-    const ske = new StellaKitError(
+    const ske = new StellarKitError(
       message,
       404,
       "OfferNotFound",
@@ -206,7 +206,7 @@ function errorHandler(err, req, res, next) {
     const status = mappedStatus ?? err.response.status ?? 400;
 
     if (isTransactionSubmissionFailure(horizonError)) {
-      const body = buildTransactionSubmissionFailedError horizonError);
+      const body = buildTransactionSubmissionFailedError(horizonError);
       logError(status, req, body.message);
       return errorResponse(res, status, withRequestId({ success: false, error: body }, req));
     }
@@ -237,8 +237,8 @@ function errorHandler(err, req, res, next) {
     return errorResponse(res, status, withRequestId(body, req));
   }
 
-  // StellaKitError instances — already structured
-  if (err instanceof StellaKitError) {
+  // StellarKitError instances — already structured
+  if (err instanceof StellarKitError) {
     logError(err.statusCode, req, err.message);
     return errorResponse(res, err.statusCode, withRequestId({
       success: false,
@@ -262,7 +262,7 @@ function errorHandler(err, req, res, next) {
   // Payload too large errors from body parsers
   if (err.type === "entity.too.large" || err.status === 413) {
     const maxBodySize = process.env.MAX_BODY_SIZE || "10kb";
-    const ske = new StellaKitError(
+    const ske = new StellarKitError(
       `Payload too large. Maximum request body size is ${maxBodySize}.`,
       413,
       "PayloadTooLargeError",
@@ -332,6 +332,20 @@ function errorHandler(err, req, res, next) {
     }, req));
   }
 
+  // LiquidityPoolNotFound errors (Horizon 404 on pool lookup)
+  if (err.isLiquidityPoolNotFound) {
+    logError(404, req, err.message);
+    return errorResponse(res, 404, withRequestId({
+      success: false,
+      error: {
+        type: "LiquidityPoolNotFound",
+        message: err.message,
+        suggestion:
+          "Verify the pool ID is correct and that the pool has not been dissolved.",
+      },
+    }, req));
+  }
+
   // TomlFetchFailed errors — issuer's stellar.toml could not be fetched
   // (network error, missing file, or invalid format)
   if (err.isTomlFetchFailed) {
@@ -370,6 +384,25 @@ function errorHandler(err, req, res, next) {
         message: err.message,
         suggestion: err.suggestion,
       },
+    }, req));
+  }
+
+  // Validation errors — thrown by makeValidationError / asset / memo etc.
+  if (err.isValidation) {
+    const error = {
+      type: "ValidationError",
+      message: err.message,
+      ...(err.field !== undefined ? { field: err.field } : {}),
+      ...(err.receivedValue !== undefined ? { receivedValue: err.receivedValue } : {}),
+    };
+    if (err.expectedFormat !== undefined) {
+      error.expectedFormat = err.expectedFormat;
+      error.suggestion = `Expected format: ${err.expectedFormat}`;
+    }
+    logError(400, req, err.message);
+    return errorResponse(res, 400, withRequestId({
+      success: false,
+      error,
     }, req));
   }
 
