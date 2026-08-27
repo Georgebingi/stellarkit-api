@@ -191,6 +191,11 @@ app.use((req, res, next) => {
 // ── Input Sanitization ──────────────────────────────────────────────────────
 app.use(sanitize);
 app.use(coerceQueryParams);
+// ── Per-route request counter ──────────────────────────────────────────────
+// Runs after body parsing and sanitisation so req.body is available; routes
+// are matched before this middleware fires (res.on("finish")), meaning
+// req.route is populated and we track the pattern, not the raw URL.
+app.use(routeCounter);
 app.use((req, res, next) => {
   const originalJson = res.json.bind(res);
   res.json = (payload) => originalJson(normalizeAmountFields(payload));
