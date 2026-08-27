@@ -18,6 +18,7 @@
  */
 
 const logger = require("../utils/logger");
+const metricsService = require("../services/metrics");
 
 /**
  * Record the start of a Horizon call on the request object.
@@ -68,6 +69,15 @@ function requestLogger(req, res, next) {
       fields,
       `[${requestId}] ${method} ${path} ${statusCode} ${responseTimeMs}ms`,
     );
+
+    // Record response time for slowest-endpoint tracking.
+    // Use the Express matched route pattern when available so dynamic segments
+    // like /account/:id are grouped together rather than tracked per unique ID.
+    const routePattern =
+      (req.route && req.route.path)
+        ? (req.baseUrl || "") + req.route.path
+        : req.path;
+    metricsService.recordResponseTime(method, routePattern, responseTimeMs);
   });
 
   next();

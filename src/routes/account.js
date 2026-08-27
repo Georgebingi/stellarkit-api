@@ -1068,26 +1068,6 @@ router.get("/:id/payments", async (req, res, next) => {
       err.field = "startDate";
       err.receivedValue = req.query.startDate;
       err.expectedFormat = "ISO 8601 date earlier than endDate";
-      throw err;
-    }
-
-    // --- ?startDate / ?endDate validation ---
-    let startDate;
-    let endDate;
-    if (req.query.startDate !== undefined) {
-      startDate = validateISODate(req.query.startDate, "startDate");
-    }
-    if (req.query.endDate !== undefined) {
-      endDate = validateISODate(req.query.endDate, "endDate");
-    }
-    if (startDate && endDate && startDate >= endDate) {
-      const err = new Error(
-        "Query param 'startDate' must be before 'endDate'.",
-      );
-      err.isValidation = true;
-      err.field = "startDate";
-      err.receivedValue = req.query.startDate;
-      err.expectedFormat = "ISO 8601 date earlier than endDate";
       err.status = 400;
       throw err;
     }
@@ -1190,23 +1170,15 @@ router.get("/:id/payments", async (req, res, next) => {
       payments.push(item);
     }
 
-    // Apply ?startDate / ?endDate filter on createdAt
-    const filteredOps = paymentOps.filter((p) => {
-      if (!startDate && !endDate) return true;
-      const t = new Date(p.createdAt);
-      if (startDate && t < startDate) return false;
-      if (endDate && t > endDate) return false;
-      return true;
-    });
-
     const lastRecord = rawRecords[rawRecords.length - 1];
     const nextCursor = lastRecord ? lastRecord.paging_token : null;
 
     return success(res, {
-      items: filteredOps,
-      total: filteredOps.length,
+      payments,
+      items: payments,
+      total: payments.length,
       limit,
-      cursor: filteredOps.length ? nextCursor : null,
+      cursor: payments.length ? nextCursor : null,
     });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
