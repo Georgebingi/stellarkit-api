@@ -8,6 +8,7 @@ const cacheTTL = require("../config/cacheConfig");
 const { formatLedgerSequence } = require("../utils/formatLedgerSequence");
 
 const { parseStellarAmount } = require("../utils/parseStellarAmount");
+const { mapFeeStats } = require("../utils/mapFeeEstimate");
 
 const LEDGER_HISTORY_LIMIT = 5;
 
@@ -34,7 +35,7 @@ router.get("/", async (req, res, next) => {
   try {
     const operations = Math.max(1, parseInt(req.query.operations) || 1);
     const cacheKey = `fee-estimate:${operations}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Check cache first (unless fresh=true)
     if (!fresh) {
@@ -57,9 +58,10 @@ router.get("/", async (req, res, next) => {
 
     const recommended = parseInt(feeStats.fee_charged.p50);
     const priority = parseInt(feeStats.fee_charged.p95);
-
+    const liveFees = mapFeeStats(feeStats);
 
     const data = {
+      ...liveFees,
       note: `Fee estimates for a transaction with ${operations} operation(s). Fees are in stroops (1 XLM = 10,000,000 stroops).`,
       operationCount: operations,
       perOperation: {
@@ -141,8 +143,6 @@ router.get("/", async (req, res, next) => {
       })(),
     };
 
-    // Cache the response
-    cacheService.set(cacheKey, data, CACHE_TTL);
     cacheService.set(cacheKey, data, cacheTTL.feeEstimate);
 
     res.set("X-Cache", "MISS");

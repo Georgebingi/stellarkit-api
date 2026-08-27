@@ -23,6 +23,13 @@ describe("StellarKit API", () => {
     });
 
     it("warms network-status and fee-estimate on startup so the next request is a cache hit", async () => {
+      jest.spyOn(server, "serverInfo").mockResolvedValue({
+        horizon_version: "2.33.0",
+        core_version: "stellar-core 21.0.0",
+        network_passphrase: "Test SDF Network ; September 2015",
+        core_latest_ledger: 12345,
+        history_latest_ledger: 12345,
+      });
       jest.spyOn(server, "ledgers").mockReturnValue({
         order: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),
@@ -76,6 +83,20 @@ describe("StellarKit API", () => {
 
   // ── Health ─────────────────────────────────────────────────────────────────
   describe("GET /health", () => {
+    beforeEach(() => {
+      jest.spyOn(server, "serverInfo").mockResolvedValue({
+        horizon_version: "2.33.0",
+        core_version: "stellar-core 21.0.0",
+        network_passphrase: "Test SDF Network ; September 2015",
+        core_latest_ledger: 1,
+        history_latest_ledger: 1,
+      });
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
     it("returns 200 with required health fields", async () => {
       const res = await request(app).get("/health");
 
@@ -113,6 +134,11 @@ describe("StellarKit API", () => {
       } else {
         process.env.NODE_ENV = originalNodeEnv;
       }
+      jest.restoreAllMocks();
+    });
+
+    beforeEach(() => {
+      jest.spyOn(server, "serverInfo").mockResolvedValue({ horizon_version: "2.33.0" });
     });
 
     it("returns CORS headers for configured origins and supports preflight requests", async () => {
