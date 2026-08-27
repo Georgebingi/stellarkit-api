@@ -3,12 +3,12 @@ const router = express.Router();
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 const { server } = require("../config/stellar");
-const { success } = require("../utils/response");
+const { success, toISOTimestamp} = require("../utils/response");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
 const { parsePaginationParams } = require("../utils/pagination");
 const { StrKey } = require("@stellar/stellar-sdk");
-const { normalizeAssetFromString } = require("../utils/asset");
+const { normalizeAssetFromString, normalizeAsset } = require("../utils/asset");
 
 function makeAssetQueryValidationError(field, value) {
   const err = new Error(
@@ -69,6 +69,32 @@ function tradeAssetMatchesFilter(trade, side, filter) {
   return assetCode === filter.code && assetIssuer === filter.issuer;
 }
 
+function normalizeLiquidityPoolTrade(trade) {
+  let price = null;
+  if (trade.price_r && Number(trade.price_r.d) !== 0) {
+    price = (Number(trade.price_r.n) / Number(trade.price_r.d)).toFixed(7);
+  } else if (trade.price) {
+    price = parseFloat(trade.price).toFixed(7);
+  }
+
+  return {
+    id: trade.id,
+    ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
+    tradeType: trade.base_is_seller ? "sell" : "buy",
+    baseAccount: trade.base_account || null,
+    baseLiquidityPoolId: trade.base_liquidity_pool_id || null,
+    baseAmount: parseFloat(trade.base_amount || "0").toFixed(7),
+    baseAsset: normalizeAsset(trade.base_asset_code, trade.base_asset_issuer, trade.base_asset_type),
+    counterAccount: trade.counter_account || null,
+    counterLiquidityPoolId: trade.counter_liquidity_pool_id || null,
+    counterAmount: parseFloat(trade.counter_amount || "0").toFixed(7),
+    counterAsset: normalizeAsset(trade.counter_asset_code, trade.counter_asset_issuer, trade.counter_asset_type),
+    price,
+    baseIsSeller: trade.base_is_seller === true,
+    offerId: trade.offer_id || null,
+  };
+}
+
 /**
  * GET /liquidity-pools/:id/trades
  */
@@ -110,14 +136,18 @@ router.get("/:id/trades", async (req, res, next) => {
       return true;
     });
 
+
+    const normalizedRecords = filteredRecords.map(normalizeLiquidityPoolTrade);
+
+
     const data = {
-      items: filteredRecords,
-      total: filteredRecords.length,
+      items: normalizedRecords,
+      total: normalizedRecords.length,
       limit,
       cursor: filteredRecords.length
-        ? filteredRecords[filteredRecords.length - 1].paging_token || null
-        : null,
-    };
+      ? filteredRecords[filteredRecords.length - 1].paging_token || null
+      : null,
+};
 
     cacheService.set(cacheKey, data, cacheTTL.poolTrades);
     res.set("X-Cache", "MISS");
