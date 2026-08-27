@@ -5,6 +5,7 @@ const { Contract, scValToNative } = require("@stellar/stellar-sdk");
 const { sorobanServer, NETWORK } = require("../config/stellar");
 const { validateContractId, validateLimit } = require("../utils/validators");
 const { success } = require("../utils/response");
+const { fetchContractDeployment } = require("../utils/contractDeployment");
 const StellarKitError = require("../utils/StellarKitError");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
@@ -80,20 +81,37 @@ router.get("/contract/:id", async (req, res, next) => {
     const { id } = req.params;
     validateContractId(id);
 
-    const entry = await loadContractInstanceEntry(id);
+    const rpcServer = requireSorobanServer();
+    const [entry, deployment, latestLedger] = await Promise.all([
+      loadContractInstanceEntry(id),
+      fetchContractDeployment(id),
+      rpcServer.getLatestLedger(),
+    ]);
+
     const instance = entry.val.contractData().val().instance();
     const executable = instance.executable();
     const executableTypeName = executable.switch().name;
     const executableType = EXECUTABLE_TYPES[executableTypeName] || executableTypeName;
+    const wasmHash =
+      executableType === "wasm" ? executable.wasmHash().toString("hex") : null;
+    const expiryLedger = entry.liveUntilLedgerSeq ?? null;
+    const currentLedger = latestLedger.sequence;
+    const isExpired =
+      expiryLedger !== null && typeof currentLedger === "number" && currentLedger > expiryLedger;
 
     return success(res, {
       contractId: id,
+      wasmHash,
+      deployer: deployment.deployer,
+      deployedAt: deployment.deployedAt,
+      deployedLedger: deployment.deployedLedger,
+      isExpired,
       executable: {
         type: executableType,
-        wasmHash: executableType === "wasm" ? executable.wasmHash().toString("hex") : null,
+        wasmHash,
       },
       lastModifiedLedger: entry.lastModifiedLedgerSeq,
-      expiryLedger: entry.liveUntilLedgerSeq ?? null,
+      expiryLedger,
     });
   } catch (err) {
     next(err);

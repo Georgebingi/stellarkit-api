@@ -975,17 +975,19 @@ image = "https://example.com/test.png"
   });
 
   // ── HTTP Parameter Pollution ────────────────────────────────────────────────
-  describe("HTTP Parameter Pollution (hpp) protection", () => {
-    it("handles duplicate non-whitelisted params safely", async () => {
+  describe("HTTP Parameter Pollution protection", () => {
+    it("rejects duplicate non-whitelisted params with 400", async () => {
       const res = await request(app).get("/health?foo=1&foo=2");
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.type).toBe("DuplicateParameter");
     });
 
-    it("handles duplicate whitelisted params safely", async () => {
+    it("rejects duplicate whitelisted params with 400", async () => {
       const res = await request(app).get(
         "/fee-estimate?operations=1&operations=2",
       );
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error.type).toBe("DuplicateParameter");
     });
   });
 
