@@ -29,7 +29,28 @@ function validateRegistration(body) {
   if (body.events.some((e) => typeof e !== "string" || e.trim() === "")) {
     return "Each event in the events array must be a non-empty string.";
   }
+  if (body.accountId !== undefined && body.accountId !== null) {
+    if (typeof body.accountId !== "string" || body.accountId.trim() === "") {
+      return "accountId must be a non-empty string when provided.";
+    }
+  }
   return null;
+}
+
+/**
+ * Public list shape for a stored webhook entry.
+ *
+ * @param {object} entry
+ * @returns {{ webhookId: string, url: string, events: string[], accountId: string|null, createdAt: string }}
+ */
+function toWebhookListItem(entry) {
+  return {
+    webhookId: entry.webhookId,
+    url: entry.url,
+    events: entry.events,
+    accountId: entry.accountId ?? null,
+    createdAt: entry.createdAt || entry.registeredAt,
+  };
 }
 
 /**
@@ -65,8 +86,9 @@ router.post("/", webhookSignatureAuth, (req, res, next) => {
     }
 
     const entry = webhookStore.register({
-      url:    req.body.url.trim(),
-      events: req.body.events.map((e) => String(e).trim()),
+      url:       req.body.url.trim(),
+      events:    req.body.events.map((e) => String(e).trim()),
+      accountId: req.body.accountId ? String(req.body.accountId).trim() : null,
     });
 
     return res.status(201).json({ success: true, data: entry });
@@ -78,19 +100,23 @@ router.post("/", webhookSignatureAuth, (req, res, next) => {
 /**
  * GET /webhooks
  *
- * List all registered webhooks.
+ * List registered webhooks. Optional `?accountId=` filters to that account only.
+ * An empty match returns `{ webhooks: [], total: 0 }` (never 404).
  *
  * Response 200:
  *   {
  *     "success": true,
  *     "data": {
- *       "webhooks": [...],
+ *       "webhooks": [
+ *         { "webhookId": "wh_...", "url": "...", "events": [...], "accountId": "G...", "createdAt": "..." }
+ *       ],
  *       "total": 2
  *     }
  *   }
  */
 router.get("/", webhookSignatureAuth, (req, res) => {
-  const webhooks = webhookStore.list();
+  const accountId = typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
+  const webhooks = webhookStore.list(accountId || undefined).map(toWebhookListItem);
   return success(res, { webhooks, total: webhooks.length });
 });
 
