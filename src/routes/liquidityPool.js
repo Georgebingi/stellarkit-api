@@ -3,11 +3,12 @@ const router = express.Router();
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 const { server } = require("../config/stellar");
-const { success } = require("../utils/response");
+const { success, toISOTimestamp} = require("../utils/response");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
 const { parsePaginationParams } = require("../utils/pagination");
 const { StrKey } = require("@stellar/stellar-sdk");
+const { normalizeAssetFromString, normalizeAsset } = require("../utils/asset");
 const { normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
 const { formatAmount } = require("../utils/formatAmount");
@@ -72,35 +73,30 @@ function tradeAssetMatchesFilter(trade, side, filter) {
   return assetCode === filter.code && assetIssuer === filter.issuer;
 }
 
-function mapLiquidityPool(pool) {
-  const reserveA = pool.reserves[0];
-  const reserveB = pool.reserves[1];
+function normalizeLiquidityPoolTrade(trade) {
+  let price = null;
+  if (trade.price_r && Number(trade.price_r.d) !== 0) {
+    price = (Number(trade.price_r.n) / Number(trade.price_r.d)).toFixed(7);
+  } else if (trade.price) {
+    price = parseFloat(trade.price).toFixed(7);
+  }
 
   return {
-    poolId: pool.id,
-    fee: pool.fee_bp,
-    totalShares: formatAmount(pool.total_shares),
-    reserveA: {
-      asset: normalizeAssetFromString(reserveA.asset),
-      amount: formatAmount(reserveA.amount),
-    },
-    reserveB: {
-      asset: normalizeAssetFromString(reserveB.asset),
-      amount: formatAmount(reserveB.amount),
-    },
-    totalTrustlines: Number(pool.total_trustlines),
-    lastModifiedLedger: pool.last_modified_ledger,
+    id: trade.id,
+    ledgerCloseTime: toISOTimestamp(trade.ledger_close_time),
+    tradeType: trade.base_is_seller ? "sell" : "buy",
+    baseAccount: trade.base_account || null,
+    baseLiquidityPoolId: trade.base_liquidity_pool_id || null,
+    baseAmount: parseFloat(trade.base_amount || "0").toFixed(7),
+    baseAsset: normalizeAsset(trade.base_asset_code, trade.base_asset_issuer, trade.base_asset_type),
+    counterAccount: trade.counter_account || null,
+    counterLiquidityPoolId: trade.counter_liquidity_pool_id || null,
+    counterAmount: parseFloat(trade.counter_amount || "0").toFixed(7),
+    counterAsset: normalizeAsset(trade.counter_asset_code, trade.counter_asset_issuer, trade.counter_asset_type),
+    price,
+    baseIsSeller: trade.base_is_seller === true,
+    offerId: trade.offer_id || null,
   };
-}
-
-function poolNotFoundError(id) {
-  return new StellarKitError(
-    `Liquidity pool '${id}' was not found.`,
-    404,
-    "LiquidityPoolNotFound",
-    null,
-    "Verify the pool ID is a valid 64-character hex liquidity pool identifier.",
-  );
 }
 
 /**
@@ -144,14 +140,18 @@ router.get("/:id/trades", async (req, res, next) => {
       return true;
     });
 
+
+    const normalizedRecords = filteredRecords.map(normalizeLiquidityPoolTrade);
+
+
     const data = {
-      items: filteredRecords,
-      total: filteredRecords.length,
+      items: normalizedRecords,
+      total: normalizedRecords.length,
       limit,
       cursor: filteredRecords.length
-        ? filteredRecords[filteredRecords.length - 1].paging_token || null
-        : null,
-    };
+      ? filteredRecords[filteredRecords.length - 1].paging_token || null
+      : null,
+};
 
     cacheService.set(cacheKey, data, cacheTTL.poolTrades);
     res.set("X-Cache", "MISS");

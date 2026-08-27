@@ -670,85 +670,7 @@ router.get("/:id/multisig-info", async (req, res, next) => {
   }
 });
 
-/**
- * GET /account/:id/effects
- */
-router.get("/:id/effects", async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    validateAccountId(id);
 
-    const { limit, cursor } = parsePaginationParams(req.query, 200);
-
-    // Ensure account exists for proper 404s
-    await withHorizonTiming(req, () => server.loadAccount(id));
-
-    let query = server.effects().forAccount(id).limit(limit).order("desc");
-    if (cursor) query = query.cursor(cursor);
-
-    const effectsResponse = await query.call();
-    const records = effectsResponse.records || [];
-
-    const effects = records.map((eff) => {
-      const effectId = eff.id || eff.effect_id || null;
-      const type = eff.type;
-      const createdAt = toISOTimestamp(eff.created_at);
-
-      // Type specific fields (best-effort normalization)
-      const asset = (() => {
-        if (isNativeAsset(eff))
-          return { code: "XLM", issuer: null, type: "native" };
-        if (eff.asset_type)
-          return {
-            code: eff.asset_code || null,
-            issuer: eff.asset_issuer || null,
-            type: eff.asset_type,
-          };
-        return null;
-      })();
-
-      const amount =
-        eff.amount !== undefined
-          ? eff.amount
-          : eff.starting_balance !== undefined
-            ? eff.starting_balance
-            : null;
-
-      return {
-        effectId,
-        type,
-        createdAt,
-        ...(asset ? { asset } : {}),
-        ...(amount !== null ? { amount } : {}),
-        // passthrough common Horizon fields when present
-        ...(eff.account !== undefined ? { account: eff.account } : {}),
-        ...(eff.type ? {} : {}),
-        ...(eff.details !== undefined ? { details: eff.details } : {}),
-        ...(eff.paging_token ? { pagingToken: eff.paging_token } : {}),
-        // Provide a normalized cursor for internal debugging/consistency
-        ...(eff.paging_token ? { nextPagingToken: eff.paging_token } : {}),
-      };
-    });
-
-    const nextCursor =
-      records.length > 0
-        ? records[records.length - 1].paging_token || null
-        : null;
-
-    return success(res, {
-      effects,
-      total: effects.length,
-      limit,
-      cursor: effects.length ? nextCursor : null,
-    });
-  } catch (err) {
-    if (err && err.response && err.response.status === 404) {
-      return next(makeAccountNotFoundError(req.params.id, NETWORK));
-    }
-    if (err && err.isAccountNotFound) return next(err);
-    next(err);
-  }
-});
 
 /**
  * GET /account/:id/operations
@@ -1068,26 +990,6 @@ router.get("/:id/payments", async (req, res, next) => {
       err.field = "startDate";
       err.receivedValue = req.query.startDate;
       err.expectedFormat = "ISO 8601 date earlier than endDate";
-      throw err;
-    }
-
-    // --- ?startDate / ?endDate validation ---
-    let startDate;
-    let endDate;
-    if (req.query.startDate !== undefined) {
-      startDate = validateISODate(req.query.startDate, "startDate");
-    }
-    if (req.query.endDate !== undefined) {
-      endDate = validateISODate(req.query.endDate, "endDate");
-    }
-    if (startDate && endDate && startDate >= endDate) {
-      const err = new Error(
-        "Query param 'startDate' must be before 'endDate'.",
-      );
-      err.isValidation = true;
-      err.field = "startDate";
-      err.receivedValue = req.query.startDate;
-      err.expectedFormat = "ISO 8601 date earlier than endDate";
       err.status = 400;
       throw err;
     }
@@ -1190,23 +1092,15 @@ router.get("/:id/payments", async (req, res, next) => {
       payments.push(item);
     }
 
-    // Apply ?startDate / ?endDate filter on createdAt
-    const filteredOps = paymentOps.filter((p) => {
-      if (!startDate && !endDate) return true;
-      const t = new Date(p.createdAt);
-      if (startDate && t < startDate) return false;
-      if (endDate && t > endDate) return false;
-      return true;
-    });
-
     const lastRecord = rawRecords[rawRecords.length - 1];
     const nextCursor = lastRecord ? lastRecord.paging_token : null;
 
     return success(res, {
-      items: filteredOps,
-      total: filteredOps.length,
+      payments,
+      items: payments,
+      total: payments.length,
       limit,
-      cursor: filteredOps.length ? nextCursor : null,
+      cursor: payments.length ? nextCursor : null,
     });
   } catch (err) {
     handleAccountNotFound(err, next, req.params.id);
@@ -1474,27 +1368,402 @@ router.get("/:id/offers", async (req, res, next) => {
 
 
 /**
+ * Builds a normalized { code, issuer, type } asset shape from a raw Horizon
+ * effect record. Returns null when the effect carries no asset information.
+ *
+ * @param {Object} eff - Raw Horizon effect record
+ * @returns {{ code: string|null, issuer: string|null, type: string }|null}
+ */
+function normalizeEffectAsset(eff) {
+  if (!eff) return null;
+
+  // Some effect types carry a pre-composed asset string (e.g. "native")
+  if (typeof eff.asset === "string") {
+    if (eff.asset === "native") return { code: "XLM", issuer: null, type: "native" };
+    const parts = eff.asset.split(":");
+    if (parts.length === 2) {
+      const [code, issuer] = parts;
+      return normalizeAsset(code, issuer, code.length > 4 ? "credit_alphanum12" : "credit_alphanum4");
+    }
+  }
+
+  // Explicit asset_type field on the record
+  if (eff.asset_type) {
+    return normalizeAsset(eff.asset_code || null, eff.asset_issuer || null, eff.asset_type);
+  }
+
+  return null;
+}
+
+/**
+ * Normalizes a raw Horizon effect record into the StellarKit camelCase shape.
+ *
+ * All common effect types are mapped explicitly so every field uses camelCase
+ * and amounts are formatted to seven decimal places. Unknown / future effect
+ * types fall back to a minimal shape that always includes `type` and `createdAt`.
+ *
+ * @param {Object} eff - Raw Horizon effect record
+ * @returns {Object} Normalised effect
+ */
+function normalizeEffect(eff) {
+  const type = eff.type || "unknown";
+  const base = {
+    id: eff.id || null,
+    type,
+    account: eff.account || null,
+    createdAt: toISOTimestamp(eff.created_at),
+    pagingToken: eff.paging_token || null,
+    transactionHash: eff.transaction_hash || null,
+  };
+
+  // ── Account effects ───────────────────────────────────────────────────────
+  if (type === "account_created") {
+    return {
+      ...base,
+      startingBalance: toSevenDecimalString(eff.starting_balance),
+    };
+  }
+
+  if (type === "account_credited" || type === "account_debited") {
+    return {
+      ...base,
+      asset: normalizeEffectAsset(eff) || normalizeAsset(eff.asset_code, eff.asset_issuer, eff.asset_type),
+      amount: toSevenDecimalString(eff.amount),
+    };
+  }
+
+  if (type === "account_removed") {
+    return { ...base };
+  }
+
+  if (type === "account_thresholds_updated") {
+    return {
+      ...base,
+      lowThreshold: eff.low_threshold != null ? Number(eff.low_threshold) : null,
+      medThreshold: eff.med_threshold != null ? Number(eff.med_threshold) : null,
+      highThreshold: eff.high_threshold != null ? Number(eff.high_threshold) : null,
+    };
+  }
+
+  if (type === "account_home_domain_updated") {
+    return {
+      ...base,
+      homeDomain: eff.home_domain || null,
+    };
+  }
+
+  if (type === "account_flags_updated") {
+    return {
+      ...base,
+      authRequired: eff.auth_required_flag != null ? Boolean(eff.auth_required_flag) : null,
+      authRevocable: eff.auth_revocable_flag != null ? Boolean(eff.auth_revocable_flag) : null,
+      authImmutable: eff.auth_immutable_flag != null ? Boolean(eff.auth_immutable_flag) : null,
+      clawbackEnabled: eff.auth_clawback_enabled_flag != null ? Boolean(eff.auth_clawback_enabled_flag) : null,
+    };
+  }
+
+  if (type === "account_inflation_destination_updated") {
+    return {
+      ...base,
+      inflationDestination: eff.inflation_destination || null,
+    };
+  }
+
+  // ── Signer effects ────────────────────────────────────────────────────────
+  if (type === "signer_created" || type === "signer_removed" || type === "signer_updated") {
+    return {
+      ...base,
+      weight: eff.weight != null ? Number(eff.weight) : null,
+      publicKey: eff.public_key || null,
+      key: eff.key || eff.public_key || null,
+    };
+  }
+
+  if (
+    type === "signer_sponsorship_created" ||
+    type === "signer_sponsorship_updated" ||
+    type === "signer_sponsorship_removed"
+  ) {
+    return {
+      ...base,
+      signer: eff.signer || null,
+      sponsor: eff.sponsor || null,
+      formerSponsor: eff.former_sponsor || null,
+    };
+  }
+
+  // ── Trustline effects ─────────────────────────────────────────────────────
+  if (
+    type === "trustline_created" ||
+    type === "trustline_removed" ||
+    type === "trustline_updated"
+  ) {
+    return {
+      ...base,
+      asset: normalizeEffectAsset(eff),
+      limit: eff.limit != null ? toSevenDecimalString(eff.limit) : null,
+      liquidityPoolId: eff.liquidity_pool_id || null,
+    };
+  }
+
+  if (type === "trustline_authorized" || type === "trustline_deauthorized") {
+    return {
+      ...base,
+      trustor: eff.trustor || null,
+      asset: normalizeEffectAsset(eff),
+    };
+  }
+
+  if (type === "trustline_authorized_to_maintain_liabilities") {
+    return {
+      ...base,
+      trustor: eff.trustor || null,
+      asset: normalizeEffectAsset(eff),
+    };
+  }
+
+  if (type === "trustline_flags_updated") {
+    return {
+      ...base,
+      asset: normalizeEffectAsset(eff),
+      trustor: eff.trustor || null,
+      authorizedFlag: eff.authorized_flag != null ? Boolean(eff.authorized_flag) : null,
+      authorizedToMaintainLiabilitiesFlag:
+        eff.authorized_to_maintain_liabilities_flag != null
+          ? Boolean(eff.authorized_to_maintain_liabilities_flag)
+          : null,
+      clawbackEnabledFlag: eff.clawback_enabled_flag != null ? Boolean(eff.clawback_enabled_flag) : null,
+    };
+  }
+
+  if (
+    type === "trustline_sponsorship_created" ||
+    type === "trustline_sponsorship_updated" ||
+    type === "trustline_sponsorship_removed"
+  ) {
+    return {
+      ...base,
+      asset: normalizeEffectAsset(eff),
+      sponsor: eff.sponsor || null,
+      formerSponsor: eff.former_sponsor || null,
+    };
+  }
+
+  // ── Offer effects ─────────────────────────────────────────────────────────
+  if (type === "offer_created" || type === "offer_removed" || type === "offer_updated") {
+    return {
+      ...base,
+      offerId: eff.offer_id != null ? String(eff.offer_id) : null,
+    };
+  }
+
+  // ── Trade effects ─────────────────────────────────────────────────────────
+  if (type === "trade") {
+    const soldAsset = eff.sold_asset_type
+      ? normalizeAsset(eff.sold_asset_code, eff.sold_asset_issuer, eff.sold_asset_type)
+      : normalizeEffectAsset(eff);
+
+    const boughtAsset = eff.bought_asset_type
+      ? normalizeAsset(eff.bought_asset_code, eff.bought_asset_issuer, eff.bought_asset_type)
+      : null;
+
+    return {
+      ...base,
+      seller: eff.seller || null,
+      offerId: eff.offer_id != null ? String(eff.offer_id) : null,
+      soldAmount: toSevenDecimalString(eff.sold_amount),
+      soldAsset,
+      boughtAmount: toSevenDecimalString(eff.bought_amount),
+      boughtAsset,
+    };
+  }
+
+  // ── Data effects ─────────────────────────────────────────────────────────
+  if (type === "data_created" || type === "data_removed" || type === "data_updated") {
+    return {
+      ...base,
+      name: eff.name || null,
+      value: eff.value || null,
+    };
+  }
+
+  if (
+    type === "data_sponsorship_created" ||
+    type === "data_sponsorship_updated" ||
+    type === "data_sponsorship_removed"
+  ) {
+    return {
+      ...base,
+      name: eff.name || null,
+      sponsor: eff.sponsor || null,
+      formerSponsor: eff.former_sponsor || null,
+    };
+  }
+
+  // ── Sequence effects ──────────────────────────────────────────────────────
+  if (type === "sequence_bumped") {
+    return {
+      ...base,
+      newSequence: eff.new_seq != null ? String(eff.new_seq) : null,
+    };
+  }
+
+  // ── Claimable balance effects ─────────────────────────────────────────────
+  if (type === "claimable_balance_created" || type === "claimable_balance_clawed_back") {
+    return {
+      ...base,
+      balanceId: eff.balance_id || null,
+      asset: normalizeEffectAsset(eff),
+      amount: toSevenDecimalString(eff.amount),
+    };
+  }
+
+  if (type === "claimable_balance_claimant_created") {
+    return {
+      ...base,
+      balanceId: eff.balance_id || null,
+      asset: normalizeEffectAsset(eff),
+      amount: toSevenDecimalString(eff.amount),
+      predicate: eff.predicate || null,
+    };
+  }
+
+  if (type === "claimable_balance_claimed") {
+    return {
+      ...base,
+      balanceId: eff.balance_id || null,
+      asset: normalizeEffectAsset(eff),
+      amount: toSevenDecimalString(eff.amount),
+    };
+  }
+
+  if (
+    type === "claimable_balance_sponsorship_created" ||
+    type === "claimable_balance_sponsorship_updated" ||
+    type === "claimable_balance_sponsorship_removed"
+  ) {
+    return {
+      ...base,
+      balanceId: eff.balance_id || null,
+      sponsor: eff.sponsor || null,
+      formerSponsor: eff.former_sponsor || null,
+    };
+  }
+
+  // ── Account sponsorship effects ───────────────────────────────────────────
+  if (
+    type === "account_sponsorship_created" ||
+    type === "account_sponsorship_updated" ||
+    type === "account_sponsorship_removed"
+  ) {
+    return {
+      ...base,
+      sponsor: eff.sponsor || null,
+      formerSponsor: eff.former_sponsor || null,
+    };
+  }
+
+  // ── Liquidity pool effects ────────────────────────────────────────────────
+  if (
+    type === "liquidity_pool_deposited" ||
+    type === "liquidity_pool_withdrew" ||
+    type === "liquidity_pool_revoked"
+  ) {
+    return {
+      ...base,
+      liquidityPoolId: eff.liquidity_pool_id || null,
+      sharesReceived: eff.shares_received != null ? toSevenDecimalString(eff.shares_received) : null,
+      sharesRedeemed: eff.shares_redeemed != null ? toSevenDecimalString(eff.shares_redeemed) : null,
+      reservesReceived: Array.isArray(eff.reserves_received)
+        ? eff.reserves_received.map((r) => ({
+            asset: normalizeEffectAsset(r),
+            amount: toSevenDecimalString(r.amount),
+          }))
+        : null,
+      reservesDeposited: Array.isArray(eff.reserves_deposited)
+        ? eff.reserves_deposited.map((r) => ({
+            asset: normalizeEffectAsset(r),
+            amount: toSevenDecimalString(r.amount),
+          }))
+        : null,
+    };
+  }
+
+  if (type === "liquidity_pool_trade") {
+    return {
+      ...base,
+      liquidityPoolId: eff.liquidity_pool_id || null,
+      sold: eff.sold
+        ? { asset: normalizeEffectAsset(eff.sold), amount: toSevenDecimalString(eff.sold.amount) }
+        : null,
+      bought: eff.bought
+        ? { asset: normalizeEffectAsset(eff.bought), amount: toSevenDecimalString(eff.bought.amount) }
+        : null,
+    };
+  }
+
+  if (type === "liquidity_pool_created" || type === "liquidity_pool_removed") {
+    return {
+      ...base,
+      liquidityPoolId: eff.liquidity_pool_id || null,
+    };
+  }
+
+  // ── Contract / Soroban effects ────────────────────────────────────────────
+  if (type === "contract_credited" || type === "contract_debited") {
+    return {
+      ...base,
+      contract: eff.contract || null,
+      asset: normalizeEffectAsset(eff),
+      amount: toSevenDecimalString(eff.amount),
+    };
+  }
+
+  // ── Fallback: unsupported / future effect types ───────────────────────────
+  // Always include the minimum guaranteed fields so consumers can rely on a
+  // consistent base shape regardless of the effect type.
+  return { ...base };
+}
+
+/**
  * GET /account/:id/effects
- * Returns paginated account effects from Horizon (historical, immutable ledger events).
+ *
+ * Returns a fully normalised, paginated list of ledger effects for the given
+ * Stellar account. All field names use camelCase, amounts are seven-decimal
+ * strings, and timestamps are ISO 8601.
  *
  * Query params:
- *   - limit, order, cursor — pagination (see parsePaginationParams)
- *   - type — optional effect type filter (e.g. account_credited)
- *   - fresh (boolean, default: false) — bypasses cache when set to "true"
+ *   - limit  (number, default: 20, max: 200)
+ *   - order  ("asc"|"desc", default: "desc")
+ *   - cursor (string, optional)
+ *   - type   (string, optional) — filter to a specific effect type;
+ *            returns 400 with the full list of valid types on mismatch
+ *   - fresh  (boolean, default: false) — bypasses the cache when set to "true"
+ *
+ * Response headers:
+ *   - X-Cache: HIT  — served from cache
+ *   - X-Cache: MISS — fetched live from Horizon and cached
+ *
+ * Returns:
+ *   - 200: { success: true, data: { items, total, limit, order, cursor } }
+ *   - 400: unrecognised ?type= value
+ *   - 404: account not found
  */
 router.get("/:id/effects", async (req, res, next) => {
   try {
     const { id } = req.params;
     validateAccountId(id);
 
-    const { limit, order, cursor } = parsePaginationParams(req.query);
-    const effectType = req.query.type || null;
+    // Validate optional effect type filter before hitting Horizon
+    const effectType = req.query.type != null ? String(req.query.type) : null;
     if (effectType) {
       validateEffectType(effectType);
     }
 
-    const cacheKey = `effects:${id}:${limit}:${order}:${cursor || ""}:${effectType || ""}`;
+    const { limit, order, cursor } = parsePaginationParams(req.query);
     const fresh = req.query.fresh === "true";
+
+    const cacheKey = `effects:${id}:${limit}:${order}:${cursor || ""}:${effectType || ""}`;
 
     if (!fresh) {
       const cached = cacheService.get(cacheKey);
@@ -1508,38 +1777,13 @@ router.get("/:id/effects", async (req, res, next) => {
     if (cursor) query = query.cursor(cursor);
     if (effectType) query = query.type(effectType);
 
-    const response = await query.call();
+    const response = await withHorizonTiming(req, () => query.call());
     const records = response.records || [];
 
-    const items = records.map((effect) => {
-      let normalizedAsset = null;
-      if (effect.asset) {
-        normalizedAsset = effect.asset;
-      } else if (effect.asset_type) {
-        normalizedAsset = normalizeAsset(effect.asset_code, effect.asset_issuer, effect.asset_type);
-      }
-      return {
-        id: effect.id,
-        type: effect.type,
-        account: effect.account,
-        createdAt: toISOTimestamp(effect.created_at),
-        pagingToken: effect.paging_token,
-        transactionHash: effect.transaction_hash || null,
-        asset: normalizedAsset,
-        amount: effect.amount || null,
-        balance: effect.balance || null,
-        startingBalance: effect.starting_balance || null,
-        limit: effect.limit || null,
-        seller: effect.seller || null,
-        offerId: effect.offer_id || null,
-        trustor: effect.trustor || null,
-        trustee: effect.trustee || null,
-        lastModifiedLedger: effect.last_modified_ledger || null,
-      };
-    });
+    const items = records.map(normalizeEffect);
 
     const nextCursor =
-      records.length > 0 ? records[records.length - 1].paging_token : null;
+      records.length > 0 ? records[records.length - 1].paging_token || null : null;
 
     const data = {
       items,
@@ -1550,7 +1794,6 @@ router.get("/:id/effects", async (req, res, next) => {
     };
 
     cacheService.set(cacheKey, data, cacheTTL.effects);
-
     res.set("X-Cache", "MISS");
     return success(res, data);
   } catch (err) {
