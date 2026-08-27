@@ -47,64 +47,15 @@ function resolveLimit() {
   return { kb: DEFAULT_MAX_KB, expressLimit: `${DEFAULT_MAX_KB}kb` };
 }
 
-const { kb: MAX_KB, expressLimit: EXPRESS_LIMIT } = resolveLimit();
+const requestBodySizeLimit = normalizeMaxBodySize(MAX_BODY_SIZE);
 
-// ── Middleware ────────────────────────────────────────────────────────────────
-
-/**
- * Express json() body parser pre-configured with the resolved size cap.
- * When a request body exceeds the limit, Express emits an error with
- * type === "entity.too.large" which is caught here before reaching any
- * route handler.
- */
-const jsonParser = express.json({ limit: EXPRESS_LIMIT });
-
-/**
- * Composed middleware that:
- *   1. Parses the JSON body with the configured size cap.
- *   2. Intercepts the "entity.too.large" error and converts it to a clean
- *      413 response with the standardised StellarKit error envelope so
- *      clients receive a consistent shape regardless of where the error
- *      originates.
- *
- * Acceptance criteria shape:
- *   {
- *     success: false,
- *     error: {
- *       type: "PayloadTooLarge",
- *       message: "Request body exceeds the maximum allowed size of 10KB."
- *     }
- *   }
- *
- * @param {import("express").Request}  req
- * @param {import("express").Response} res
- * @param {import("express").NextFunction} next
- */
-function bodySizeLimit(req, res, next) {
-  jsonParser(req, res, (err) => {
-    if (!err) {
-      return next();
-    }
-
-    // Payload-too-large is signalled by Express with type "entity.too.large"
-    // or a status / statusCode of 413.
-    if (err.type === "entity.too.large" || err.status === 413 || err.statusCode === 413) {
-      return res.status(413).json({
-        success: false,
-        error: {
-          type: "PayloadTooLarge",
-          message: `Request body exceeds the maximum allowed size of ${MAX_KB}KB.`,
-        },
-      });
-    }
-
-    // Any other body-parser error (malformed JSON, charset errors, etc.)
-    // is forwarded to the global error handler.
-    next(err);
-  });
-}
-
-// ── Exports ───────────────────────────────────────────────────────────────────
+// Capture raw body for webhook signature verification
+const bodySizeLimit = express.json({
+  limit: requestBodySizeLimit,
+  verify: (req, res, buf, encoding) => {
+    req.rawBody = buf.toString(encoding || 'utf8');
+  },
+});
 
 module.exports = bodySizeLimit;
 

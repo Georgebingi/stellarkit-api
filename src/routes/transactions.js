@@ -4,7 +4,7 @@ const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
 const { server, NETWORK } = require("../config/stellar");
 const { success, toISOTimestamp } = require("../utils/response");
-const { validateAccountId } = require("../utils/validators");
+const { validateAccountId, validateTransactionHash } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const { makeAccountNotFoundError } = require("../utils/errors");
 const { normalizeAsset } = require("../utils/asset");
@@ -34,8 +34,9 @@ function handleAccountNotFound(err, next, accountId) {
  * Additional fields retained for full context:
  *   id, sourceAccount, fee / feeSummary, memoType, envelopeXdr
  *
- * @param {object} tx - Raw Horizon TransactionRecord
- * @returns {object} Normalised transaction shape
+ * @example
+ * GET /transactions/GAAZI4TCR3TY5OJHCTJ2C4Q6SY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN
+ * GET /transactions/GAAZI4...?limit=5&order=asc
  */
 function normaliseTransaction(tx) {
   const chargedInStroops = parseInt(tx.fee_charged, 10) || 0;
@@ -78,31 +79,30 @@ function normaliseTransaction(tx) {
  * Returns paginated transaction history for a Stellar account pulled live
  * from Horizon via server.transactions().forAccount(id).
  *
- * Query params:
- *   - limit  (number, default: 20, max: 200) — records per page
- *   - cursor (string) — Horizon paging token from the previous response
- *   - order  ("asc" | "desc", default: "desc") — chronological order
- *
- * Response shape:
- *   {
- *     success: true,
- *     data: {
- *       items: [
- *         {
- *           transactionHash: string,   // primary normalised field
- *           ledger:          number,
- *           createdAt:       string,   // ISO 8601
- *           operationCount:  number,
- *           memo:            string | null,
- *           successful:      boolean,
- *           // …plus id, sourceAccount, memoType, envelopeXdr, fee, feeSummary
- *         },
- *         ...
- *       ],
- *       total:  number,
- *       limit:  number,
- *       cursor: string | null          // paging token of the last record
- *     }
+ * @returns {Promise<void>} Sends a JSON response:
+ * {
+ *   data: Array<[
+ *     id: string,
+ *     hash: string,
+ *     ledger: number,
+ *     createdAt: string,
+ *     sourceAccount: string,
+ *     fee: {
+ *       charged: string,
+ *       account: string
+ *     },
+ *     operationCount: number,
+ *     memoType: string,
+ *     memo: string | null,
+ *     successful: boolean,
+ *     envelopeXdr: string
+ *   }],
+ *   meta: {
+ *     count: number,
+ *     limit: number,
+ *     order: "asc" | "desc",
+ *     nextCursor: string | null,
+ *     hasMore: boolean
  *   }
  *
  * @example
@@ -284,7 +284,7 @@ router.post("/batch-status", async (req, res, next) => {
     const { hashes } = req.body;
 
     if (!hashes || !Array.isArray(hashes)) {
-      const err = new Error("Property 'hashes' is required and must be an array.");
+      const err = new Error("property 'hashes' is required and must be an array.");
       err.isValidation = true;
       throw err;
     }
@@ -300,13 +300,8 @@ router.post("/batch-status", async (req, res, next) => {
     }
 
     // Validate each hash (64-character hex string)
-    const hashRegex = /^[0-9a-fA-F]{64}$/;
     for (const hash of hashes) {
-      if (!hashRegex.test(hash)) {
-        const err = new Error(`Invalid transaction hash: "${hash}". Must be a 64-character hex string.`);
-        err.isValidation = true;
-        throw err;
-      }
+      validateTransactionHash(hash);
     }
 
     // Perform lookups in parallel
