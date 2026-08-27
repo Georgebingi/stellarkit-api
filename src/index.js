@@ -23,10 +23,12 @@ const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
+const routeCounter = require("./middleware/routeCounter");
 
 const networkStatusRouter = require("./routes/networkStatus");
 const feeEstimateRouter = require("./routes/feeEstimate");
 const accountRouter = require("./routes/account");
+const accountsBulkRouter = require("./routes/accountsBulk");
 const transactionsRouter = require("./routes/transactions");
 const assetRouter = require("./routes/asset");
 const dexRouter = require("./routes/dex");
@@ -179,6 +181,11 @@ app.use(rateLimiter);
 // ── Input Sanitization ──────────────────────────────────────────────────────
 app.use(sanitize);
 app.use(coerceQueryParams);
+// ── Per-route request counter ──────────────────────────────────────────────
+// Runs after body parsing and sanitisation so req.body is available; routes
+// are matched before this middleware fires (res.on("finish")), meaning
+// req.route is populated and we track the pattern, not the raw URL.
+app.use(routeCounter);
 app.use((req, res, next) => {
   const originalJson = res.json.bind(res);
   res.json = (payload) => originalJson(normalizeAmountFields(payload));
@@ -212,6 +219,7 @@ app.use("/fee-estimate", etagMiddleware, feeEstimateRouter);
 const accountCounterpartiesRouter = require("./routes/account.counterparties");
 app.use("/account", etagMiddleware, accountRouter);
 app.use("/account", etagMiddleware, accountCounterpartiesRouter);
+app.use("/accounts", accountsBulkRouter);
 app.use("/transactions", transactionsRouter);
 app.use("/asset", etagMiddleware, assetRouter);
 app.use("/dex", etagMiddleware, dexRouter);
