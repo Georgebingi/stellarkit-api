@@ -1,6 +1,6 @@
 # Soroban Contract Endpoints
 
-This guide covers StellarKit API's two Soroban endpoints: `GET /soroban/contract/:id` and `GET /soroban/contract/:id/storage`. It explains what Soroban is, how contract IDs work, what each response field means, and how to use the endpoints to debug a deployed contract.
+This guide covers StellarKit API's Soroban endpoints: `GET /soroban/contract/:id`, `GET /soroban/contract/:id/storage`, and `GET /soroban/contract/:id/functions`. It explains what Soroban is, how contract IDs work, what each response field means, and how to use the endpoints to debug a deployed contract.
 
 ## What is Soroban?
 
@@ -170,9 +170,47 @@ curl -i "https://your-stellarkit-instance.example.com/soroban/contract/<id>/stor
 # X-Cache: MISS
 ```
 
+## `GET /soroban/contract/:id/functions`
+
+Returns the contract's exported function signatures parsed from its WASM ABI (`contractspecv0`). Use this before building invoke transactions so you know function names, parameter types, and return types.
+
+Stellar Asset Contracts and WASM binaries with no exported functions return an empty `functions` array rather than an error. Missing contracts return `404 ContractNotFound`. Responses are cached for 60 seconds (`CACHE_TTL_CONTRACT_FUNCTIONS_MS`).
+
+### Example request
+
+```bash
+curl https://your-stellarkit-instance.example.com/soroban/contract/CCJZ5DGASBWQXR5MPFCJXMBI333XE5U3FSJTNQU7RIKE3P5GN2K2WYD2/functions
+```
+
+### Example response
+
+```json
+{
+  "success": true,
+  "data": {
+    "functions": [
+      {
+        "name": "transfer",
+        "params": [
+          { "name": "from", "type": "Address" },
+          { "name": "to", "type": "Address" },
+          { "name": "amount", "type": "I128" }
+        ],
+        "returnType": "Void"
+      },
+      {
+        "name": "balance",
+        "params": [{ "name": "id", "type": "Address" }],
+        "returnType": "I128"
+      }
+    ]
+  }
+}
+```
+
 ## Configuration
 
-Both endpoints require a reachable Soroban RPC server, configured via `SOROBAN_RPC_URL`:
+These endpoints require a reachable Soroban RPC server, configured via `SOROBAN_RPC_URL`:
 
 ```env
 # Testnet default (used automatically if unset): https://soroban-testnet.stellar.org
@@ -180,4 +218,4 @@ Both endpoints require a reachable Soroban RPC server, configured via `SOROBAN_R
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 ```
 
-If `SOROBAN_RPC_URL` is unset and `STELLAR_NETWORK=mainnet`, both endpoints return a `500 ConfigError` telling you to set it.
+If `SOROBAN_RPC_URL` is unset and `STELLAR_NETWORK=mainnet`, these endpoints return a `500 ConfigError` telling you to set it.

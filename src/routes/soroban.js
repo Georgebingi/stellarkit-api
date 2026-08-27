@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const { Contract, scValToNative } = require("@stellar/stellar-sdk");
+const { Contract, scValToNative, xdr } = require("@stellar/stellar-sdk");
 const { sorobanServer, NETWORK } = require("../config/stellar");
 const { validateContractId, validateLimit } = require("../utils/validators");
 const { success } = require("../utils/response");
@@ -9,6 +9,7 @@ const { fetchContractDeployment } = require("../utils/contractDeployment");
 const StellarKitError = require("../utils/StellarKitError");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
+const { parseFunctionsFromWasm } = require("../utils/contractSpec");
 
 const EXECUTABLE_TYPES = {
   contractExecutableWasm: "wasm",
@@ -71,6 +72,64 @@ async function loadContractInstanceEntry(contractId) {
 
   return response.entries[0];
 }
+
+async function loadContractWasm(wasmHash) {
+  const rpcServer = requireSorobanServer();
+  const codeKey = xdr.LedgerKey.contractCode(
+    new xdr.LedgerKeyContractCode({ hash: wasmHash }),
+  );
+  const response = await rpcServer.getLedgerEntries(codeKey);
+  if (!response.entries || response.entries.length === 0) {
+    return null;
+  }
+
+  const code = response.entries[0].val.contractCode().code();
+  return Buffer.isBuffer(code) ? code : Buffer.from(code);
+}
+
+/**
+ * GET /soroban/contract/:id/functions
+ *
+ * Returns the contract's exported function signatures parsed from its WASM ABI
+ * (the `contractspecv0` custom section). Stellar Asset Contracts and WASM
+ * binaries with no spec entries return an empty functions array.
+ *
+ * Response is cached for 60 seconds.
+ */
+router.get("/contract/:id/functions", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateContractId(id);
+
+    const cacheKey = `contract-functions:${id}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached) {
+      res.set("X-Cache", "HIT");
+      return success(res, cached);
+    }
+
+    const entry = await loadContractInstanceEntry(id);
+    const instance = entry.val.contractData().val().instance();
+    const executable = instance.executable();
+    const executableTypeName = executable.switch().name;
+    const executableType = EXECUTABLE_TYPES[executableTypeName] || executableTypeName;
+
+    let functions = [];
+    if (executableType === "wasm") {
+      const wasmBytes = await loadContractWasm(executable.wasmHash());
+      if (wasmBytes) {
+        functions = parseFunctionsFromWasm(wasmBytes);
+      }
+    }
+
+    const data = { functions };
+    cacheService.set(cacheKey, data, cacheTTL.contractFunctions);
+    res.set("X-Cache", "MISS");
+    return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /soroban/contract/:id

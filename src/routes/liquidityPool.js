@@ -11,6 +11,8 @@ const { StrKey } = require("@stellar/stellar-sdk");
 const { normalizeAssetFromString, normalizeAsset } = require("../utils/asset");
 const { normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
+const { formatAmount } = require("../utils/formatAmount");
+const StellarKitError = require("../utils/StellarKitError");
 
 function makeAssetQueryValidationError(field, value) {
   const err = new Error(
@@ -310,6 +312,32 @@ router.get("/:id/reserve-ratio", async (req, res, next) => {
       driftFromEqual: `${driftFromEqual.toFixed(2)}%`,
       driftRating,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /liquidity-pools/:id
+ *
+ * Returns live Horizon data for a constant-product liquidity pool, mapped to
+ * the normalised StellarKit shape.
+ */
+router.get("/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    let pool;
+    try {
+      pool = await server.liquidityPools().liquidityPoolId(id).call();
+    } catch (err) {
+      if (err.response && err.response.status === 404) {
+        return next(poolNotFoundError(id));
+      }
+      throw err;
+    }
+
+    return success(res, mapLiquidityPool(pool));
   } catch (err) {
     next(err);
   }

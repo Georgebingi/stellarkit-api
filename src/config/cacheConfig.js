@@ -146,6 +146,18 @@ const cacheTTL = {
     process.env.CACHE_TTL_SIGNING_KEYS_MS,
     20000
   ),
+
+  /** /soroban/contract/:id/storage — instance storage changes only on invoke */
+  contractStorage: msToSeconds(
+    process.env.CACHE_TTL_CONTRACT_STORAGE_MS,
+    15000
+  ),
+
+  /** /soroban/contract/:id/functions — contract ABI is immutable per WASM hash */
+  contractFunctions: msToSeconds(
+    process.env.CACHE_TTL_CONTRACT_FUNCTIONS_MS,
+    60000
+  ),
 };
 
 module.exports = cacheTTL;
