@@ -41,11 +41,9 @@ const stellarTomlRouter = require("./routes/stellarToml");
 const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
 const metricsRouter = require("./routes/metrics");
-const webhooksRouter = require("./routes/webhooks");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
-const webhooksRouter = require("./routes/webhooks");
 
 const app = express();
 // Disable server identification header for security
@@ -248,7 +246,6 @@ app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
 app.use("/transaction", etagMiddleware, transactionEffectsRouter);
-app.use("/webhooks", webhooksRouter);
 
 // ── Root
 app.get("/", (req, res) => {
