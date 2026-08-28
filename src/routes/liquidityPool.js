@@ -9,7 +9,6 @@ const cacheTTL = require("../config/cacheConfig");
 const { parsePaginationParams } = require("../utils/pagination");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { normalizeAssetFromString, normalizeAsset } = require("../utils/asset");
-const { normalizeAssetFromString } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
 const { formatAmount } = require("../utils/formatAmount");
 const StellarKitError = require("../utils/StellarKitError");
