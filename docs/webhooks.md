@@ -4,6 +4,8 @@ StellarKit API can push ledger events to your HTTPS endpoint instead of requirin
 
 Webhook registrations are stored in process memory. They are lost on server restart. For production, run a dedicated StellarKit instance and re-register after deploys.
 
+For the complete per-event reference — trigger conditions, full payload examples, and a description of every field — see [webhook-events.md](./webhook-events.md).
+
 ---
 
 ## Table of Contents
@@ -17,6 +19,7 @@ Webhook registrations are stored in process memory. They are lost on server rest
 7. [Listing webhooks](#listing-webhooks)
 8. [Unregistration](#unregistration)
 9. [Error reference](#error-reference)
+10. [Event reference](./webhook-events.md)
 
 ---
 
@@ -98,11 +101,15 @@ The registration API accepts any event name string. StellarKit currently **emits
 
 Subscribe only to events you handle. Unknown names are stored but never delivered until the server starts emitting them.
 
+Each event's trigger conditions and full field-by-field payload description live in [webhook-events.md](./webhook-events.md).
+
 ---
 
 ## Payload shape
 
 Deliveries are `POST` requests with `Content-Type: application/json`. Every payload includes an `event` field so a single URL can fan-in multiple types.
+
+The examples below are a summary; [webhook-events.md](./webhook-events.md) documents every field, its type, and its fallback value.
 
 Common headers on each delivery:
 
