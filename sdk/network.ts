@@ -62,6 +62,29 @@ export interface ValidatorsResponse {
   ungrouped: Validator[];
 }
 
+// ── Base fee types ───────────────────────────────────────────────────────────
+
+/**
+ * Current network base fee, as returned by GET /network/base-fee.
+ *
+ * Fields mirror the server-side normalisation:
+ *   - baseFeeStroops — base fee of the last closed ledger, in stroops
+ *   - baseFeeXLM     — the same fee as a seven-decimal XLM string
+ *   - isSurge        — true when the network is charging above the minimum
+ *                      fee, or ledger capacity usage is above 50%
+ *   - ledgerSequence — sequence of the ledger the fee was read from, or null
+ *   - ledgerClosedAt — ISO timestamp of that ledger's close, or null
+ *   - note           — human-readable note describing the units
+ */
+export interface BaseFee {
+  baseFeeStroops: number;
+  baseFeeXLM: string;
+  isSurge: boolean;
+  ledgerSequence: number | null;
+  ledgerClosedAt: string | null;
+  note: string;
+}
+
 // ── Generic paginated response wrapper ──────────────────────────────────────
 
 /**
@@ -157,5 +180,37 @@ export class NetworkModule {
   async getValidators(options: { fresh?: boolean } = {}): Promise<ValidatorsResponse> {
     const query = options.fresh ? "?fresh=true" : "";
     return this._get<ValidatorsResponse>(`/network/validators${query}`);
+  }
+
+  /**
+   * Retrieve the current network base fee from the StellarKit API.
+   *
+   * Calls GET /network/base-fee and returns a typed BaseFee. The fee is
+   * reported both in stroops and as a seven-decimal XLM string, alongside
+   * an `isSurge` flag indicating whether the network is currently charging
+   * above the minimum fee.
+   *
+   * @param options.fresh - When true, instructs the server to bypass its
+   *   5-second cache and read the fee live from Horizon.
+   *
+   * @returns A typed BaseFee with the fee in both units, the surge flag,
+   *   and the ledger the fee was read from.
+   *
+   * @throws {StellarKitError} On any non-2xx API response (e.g. 502 when
+   *   Horizon is unreachable).
+   *
+   * @example
+   * ```ts
+   * const fee = await network.getBaseFee();
+   * console.log(`${fee.baseFeeStroops} stroops (${fee.baseFeeXLM} XLM)`);
+   * if (fee.isSurge) console.log("Network is surging — consider a higher fee");
+   *
+   * // Skip the cache when you need the fee for an imminent submission
+   * const live = await network.getBaseFee({ fresh: true });
+   * ```
+   */
+  async getBaseFee(options: { fresh?: boolean } = {}): Promise<BaseFee> {
+    const query = options.fresh ? "?fresh=true" : "";
+    return this._get<BaseFee>(`/network/base-fee${query}`);
   }
 }
