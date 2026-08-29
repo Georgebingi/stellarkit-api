@@ -27,6 +27,71 @@ export class StellarKitError extends Error {
   }
 }
 
+// ── NetworkStatus types ──────────────────────────────────────────────────────
+
+/**
+ * The latest ledger details nested inside a NetworkStatus response.
+ */
+export interface LatestLedger {
+  sequence: number | null;
+  closedAt: string | null;
+  transactionCount: number | null;
+  operationCount: number | null;
+  totalCoins: string | null;
+  feePool: string | null;
+}
+
+/**
+ * Fee info nested inside a NetworkStatus response.
+ */
+export interface NetworkFees {
+  baseFeeInStroops: number | null;
+  baseFeeInXLM: string | null;
+  basereserveInStroops: number | null;
+  baseReserveInXLM: string | null;
+}
+
+/**
+ * Protocol info nested inside a NetworkStatus response.
+ */
+export interface NetworkProtocol {
+  version: number | null;
+}
+
+/**
+ * Typed response shape for GET /network-status.
+ *
+ * Maps directly onto the StellarKit API response documented in
+ * docs/api-design.md and produced by src/utils/mapNetworkStatus.js.
+ */
+export interface NetworkStatus {
+  /** "testnet" | "mainnet" — whichever the server is configured for. */
+  network: string;
+  /** The Horizon URL the server is connected to. */
+  horizonUrl: string;
+  /** Horizon service version string, or null if unavailable. */
+  horizonVersion: string | null;
+  /** Stellar Core version string, or null if unavailable. */
+  coreVersion: string | null;
+  /** The full network passphrase, or null if unavailable. */
+  networkPassphrase: string | null;
+  /** Sequence number of the most recently ingested ledger. */
+  currentLedger: number | null;
+  /** Sequence number at the tip of the historical ledger archive. */
+  historyLatestLedger: number | null;
+  /**
+   * True when currentLedger === historyLatestLedger (both non-null).
+   * False indicates the node is catching up or lagging behind the network.
+   */
+  isSynced: boolean;
+  /** Details from the most recently closed ledger. */
+  latestLedger: LatestLedger;
+  /** Base fee and reserve figures from the latest ledger. */
+  fees: NetworkFees;
+  /** Protocol version in use. */
+  protocol: NetworkProtocol;
+}
+
 // ── Validator types ──────────────────────────────────────────────────────────
 
 /**
@@ -183,34 +248,37 @@ export class NetworkModule {
   }
 
   /**
-   * Retrieve the current network base fee from the StellarKit API.
+   * Retrieve the current Stellar network status from the StellarKit API.
    *
-   * Calls GET /network/base-fee and returns a typed BaseFee. The fee is
-   * reported both in stroops and as a seven-decimal XLM string, alongside
-   * an `isSurge` flag indicating whether the network is currently charging
-   * above the minimum fee.
+   * Calls GET /network-status and returns a typed NetworkStatus containing
+   * ledger info, sync state, fees, and protocol version.
    *
-   * @param options.fresh - When true, instructs the server to bypass its
-   *   5-second cache and read the fee live from Horizon.
+   * When `options.fresh` is true the query string `?fresh=true` is appended,
+   * which instructs the server to bypass its in-memory cache and fetch live
+   * data directly from Horizon.
    *
-   * @returns A typed BaseFee with the fee in both units, the surge flag,
-   *   and the ledger the fee was read from.
+   * @param options.fresh - When true, appends `?fresh=true` to bypass cache.
    *
-   * @throws {StellarKitError} On any non-2xx API response (e.g. 502 when
-   *   Horizon is unreachable).
+   * @returns A typed NetworkStatus payload.
+   *
+   * @throws {StellarKitError} On any non-2xx API response (e.g. 503 when
+   *   Horizon is unreachable, or 502 when the upstream times out).
    *
    * @example
    * ```ts
-   * const fee = await network.getBaseFee();
-   * console.log(`${fee.baseFeeStroops} stroops (${fee.baseFeeXLM} XLM)`);
-   * if (fee.isSurge) console.log("Network is surging — consider a higher fee");
+   * const network = new NetworkModule({ baseUrl: "http://localhost:3000" });
    *
-   * // Skip the cache when you need the fee for an imminent submission
-   * const live = await network.getBaseFee({ fresh: true });
+   * // Cached result (default)
+   * const status = await network.getNetworkStatus();
+   * console.log(`Synced: ${status.isSynced}, ledger: ${status.currentLedger}`);
+   *
+   * // Bypass cache for fresh live data
+   * const fresh = await network.getNetworkStatus({ fresh: true });
+   * console.log(`Network: ${fresh.network}, horizon: ${fresh.horizonVersion}`);
    * ```
    */
-  async getBaseFee(options: { fresh?: boolean } = {}): Promise<BaseFee> {
+  async getNetworkStatus(options: { fresh?: boolean } = {}): Promise<NetworkStatus> {
     const query = options.fresh ? "?fresh=true" : "";
-    return this._get<BaseFee>(`/network/base-fee${query}`);
+    return this._get<NetworkStatus>(`/network-status${query}`);
   }
 }
