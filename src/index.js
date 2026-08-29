@@ -8,12 +8,17 @@ const compression = require("compression");
 const logger = require("./utils/logger");
 const { parseStellarAmount } = require("./utils/parseStellarAmount");
 const { setupWebSocket } = require("./websocket");
-const { server } = require("./config/stellar");
+const { server, horizonUrl, NETWORK } = require("./config/stellar");
 const cacheService = require("./services/cache");
 const networkStatusCache = cacheService;
 const feeEstimateCache = cacheService;
+const { fetchNetworkStatus } = require("./utils/mapNetworkStatus");
+const { mapFeeStats } = require("./utils/mapFeeEstimate");
+const { getHorizonHealth } = require("./utils/horizonHealth");
+const cacheTTL = require("./config/cacheConfig");
 
 const rateLimiter = require("./middleware/rateLimiter");
+const restrictHttpMethods = require("./middleware/restrictHttpMethods");
 const contentTypeValidator = require("./middleware/contentTypeValidator");
 const bodySizeLimit = require("./middleware/bodySizeLimit");
 const errorHandler = require("./middleware/errorHandler");
@@ -22,12 +27,19 @@ const requestLogger = require("./middleware/requestLogger");
 const metricsCollector = require("./middleware/metricsCollector");
 const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
+const rejectDuplicateQueryParams = require("./middleware/rejectDuplicateQueryParams");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
+const routeCounter = require("./middleware/routeCounter");
+const metricsService = require("./services/metrics");
+const routeCounter = require("./middleware/routeCounter");
 
 const networkStatusRouter = require("./routes/networkStatus");
+const webhooksRouter = require("./routes/webhooks");
+const contractEventPoller = require("./services/contractEventPoller");
 const feeEstimateRouter = require("./routes/feeEstimate");
 const accountRouter = require("./routes/account");
+const accountsRouter = require("./routes/accounts");
 const transactionsRouter = require("./routes/transactions");
 const assetRouter = require("./routes/asset");
 const dexRouter = require("./routes/dex");
@@ -37,6 +49,7 @@ const utilsRouter = require("./routes/utils");
 const stellarTomlRouter = require("./routes/stellarToml");
 const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
+const metricsRouter = require("./routes/metrics");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
@@ -49,37 +62,24 @@ const { normalizeAmountFields } = require("./utils/response");
 
 const PORT = process.env.PORT || 3000;
 
+// Captured once at process start so /health can report accurate uptime.
+const SERVER_STARTED_AT = new Date().toISOString();
+
 async function warmNetworkStatusCache({
   logger: customLogger = logger,
   horizonServer = server,
 } = {}) {
-  const ledger = await horizonServer.ledgers().order("desc").limit(1).call();
-  const latest = ledger.records[0];
+  const data = await fetchNetworkStatus(horizonServer, {
+    network: process.env.STELLAR_NETWORK || NETWORK || "testnet",
+    horizonUrl,
+  });
 
-  const data = {
-    network: process.env.STELLAR_NETWORK || "testnet",
-    horizonUrl: require("./config/stellar").horizonUrl,
-    latestLedger: {
-      sequence: latest.sequence,
-      closedAt: latest.closed_at,
-      transactionCount: latest.successful_transaction_count,
-      operationCount: latest.operation_count,
-      totalCoins: latest.total_coins,
-      feePool: latest.fee_pool,
-    },
-    fees: {
-      baseFeeInStroops: latest.base_fee_in_stroops,
-      baseFeeInXLM: parseStellarAmount(latest.base_fee_in_stroops),
-      basereserveInStroops: latest.base_reserve_in_stroops,
-      baseReserveInXLM: parseStellarAmount(latest.base_reserve_in_stroops),
-    },
-    protocol: {
-      version: latest.protocol_version,
-    },
-  };
-
-  cacheService.set("network-status", data);
-  customLogger.info("[CACHE WARM] /network-status");
+  cacheService.set("network-status", data, cacheTTL.networkStatus);
+  const writeWarmLog =
+    typeof customLogger.info === "function"
+      ? customLogger.info.bind(customLogger)
+      : customLogger.log.bind(customLogger);
+  writeWarmLog("[CACHE WARM] /network-status");
 }
 
 async function warmFeeEstimateCache({
@@ -89,11 +89,12 @@ async function warmFeeEstimateCache({
   const feeStats = await horizonServer.feeStats();
   const operations = 1;
 
-  const base = parseInt(feeStats.fee_charged.p10);
   const recommended = parseInt(feeStats.fee_charged.p50);
   const priority = parseInt(feeStats.fee_charged.p95);
+  const liveFees = mapFeeStats(feeStats);
 
   const data = {
+    ...liveFees,
     note: `Fee estimates for a transaction with ${operations} operation(s). Fees are in stroops (1 XLM = 10,000,000 stroops).`,
     operationCount: operations,
     perOperation: {
@@ -138,8 +139,12 @@ async function warmFeeEstimateCache({
     },
   };
 
-  cacheService.set("fee-estimate:1", data);
-  customLogger.info("[CACHE WARM] /fee-estimate");
+  cacheService.set("fee-estimate:1", data, cacheTTL.feeEstimate);
+  const writeWarmLog =
+    typeof customLogger.info === "function"
+      ? customLogger.info.bind(customLogger)
+      : customLogger.log.bind(customLogger);
+  writeWarmLog("[CACHE WARM] /fee-estimate");
 }
 
 async function warmStartupCaches({
@@ -166,6 +171,8 @@ async function warmStartupCaches({
 
 // ── Security & Parsing ──────────────────────────────────────────────────────
 app.use(helmet());
+// Reject TRACE/CONNECT/OPTIONS/PUT/HEAD/etc. before CORS or route handlers
+app.use(restrictHttpMethods);
 // Skip compression for responses smaller than 1 KB — gzip headers alone can exceed tiny payloads
 app.use(compression({ threshold: 1024 }));
 app.use(cors());
@@ -174,6 +181,7 @@ app.use(requestLogger);
 app.use(metricsCollector);
 app.use(contentTypeValidator);
 app.use(bodySizeLimit);
+app.use(rejectDuplicateQueryParams);
 app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
 
 // ── Metrics (excluded from rate limiting) ───────────────────────────────────
@@ -182,9 +190,20 @@ app.use("/metrics", metricsRouter);
 // ── Rate Limiting ───────────────────────────────────────────────────────────
 app.use(rateLimiter);
 
+// ── Metrics request counter ─────────────────────────────────────────────────
+app.use((req, res, next) => {
+  metricsService.incrementRequests();
+  next();
+});
+
 // ── Input Sanitization ──────────────────────────────────────────────────────
 app.use(sanitize);
 app.use(coerceQueryParams);
+// ── Per-route request counter ──────────────────────────────────────────────
+// Runs after body parsing and sanitisation so req.body is available; routes
+// are matched before this middleware fires (res.on("finish")), meaning
+// req.route is populated and we track the pattern, not the raw URL.
+app.use(routeCounter);
 app.use((req, res, next) => {
   const originalJson = res.json.bind(res);
   res.json = (payload) => originalJson(normalizeAmountFields(payload));
@@ -192,15 +211,23 @@ app.use((req, res, next) => {
 });
 
 // ── Health Check ────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => {
+app.get("/health", async (req, res) => {
+  const network = process.env.STELLAR_NETWORK || NETWORK || "testnet";
+  const horizon = await getHorizonHealth({ server, network });
+  const status = horizon.status === "ok" ? "ok" : horizon.status;
+
   res.json({
     success: true,
     data: {
-      status: "ok",
+      status,
       service: "StellarKit API",
       version: require("../package.json").version,
       timestamp: new Date().toISOString(),
-      network: process.env.STELLAR_NETWORK || "testnet",
+      network,
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      startedAt: SERVER_STARTED_AT,
+      horizon,
     },
   });
 });
@@ -218,6 +245,7 @@ app.use("/fee-estimate", etagMiddleware, feeEstimateRouter);
 const accountCounterpartiesRouter = require("./routes/account.counterparties");
 app.use("/account", etagMiddleware, accountRouter);
 app.use("/account", etagMiddleware, accountCounterpartiesRouter);
+app.use("/accounts", accountsRouter);
 app.use("/transactions", transactionsRouter);
 app.use("/asset", etagMiddleware, assetRouter);
 app.use("/dex", etagMiddleware, dexRouter);
@@ -228,6 +256,8 @@ app.use("/utils", utilsRouter);
 app.use("/stellar-toml", stellarTomlRouter);
 app.use("/claimable-balances", etagMiddleware, claimableBalancesRouter);
 app.use("/cache", cacheStatsRouter);
+app.use("/metrics", metricsRouter);
+app.use("/webhooks", webhooksRouter);
 app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
@@ -250,6 +280,7 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/fee-estimate?operations=N", description: "Fee estimate for N operations" },
         { method: "GET", path: "/fee-estimate/surge-status", description: "Identify fee surge periods and get actionable recommendations" },
         { method: "GET", path: "/fee-estimate/trends", description: "Analyze fee trends across last 50 ledgers with statistical summary" },
+        { method: "POST", path: "/fee-estimate/batch", description: "Batch fee estimates for up to 10 transaction types in a single call" },
         { method: "GET", path: "/account/:id", description: "Account details, balances, signers" },
         { method: "GET", path: "/account/:id/reserve-breakdown", description: "Per-type breakdown of the minimum XLM reserve requirement" },
         { method: "GET", path: "/account/:id/age", description: "Account age and longevity metrics" },
@@ -286,6 +317,8 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/cache/stats", description: "Cache hit rate and performance statistics" },
         { method: "GET", path: "/soroban/contract/:id", description: "Soroban contract instance details (executable type, wasm hash)" },
         { method: "GET", path: "/soroban/contract/:id/storage", description: "Soroban contract instance-storage entries" },
+        { method: "GET", path: "/soroban/contract/:id/functions", description: "Exported Soroban contract function signatures parsed from the contract ABI" },
+        { method: "GET", path: "/liquidity-pools/:id", description: "Live Horizon liquidity pool details" },
         {
           method: "GET",
           path: "/network-status",
@@ -640,6 +673,7 @@ function startServer({
   });
 
   setupWebSocketHook(httpServer);
+  contractEventPoller.start();
   return httpServer;
 }
 

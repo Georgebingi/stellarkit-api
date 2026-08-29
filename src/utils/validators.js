@@ -19,7 +19,7 @@ function qp(param, msg) {
  */
 function makeInvalidAccountIdError(accountId) {
   const err = new Error(
-    `"${String(accountId).slice(0, 60)}" is not a valid Stellar account address.`
+    `""${String(accountId).slice(0, 60)}" is not a valid Stellar account address.`
   );
   err.isInvalidAccountId = true;
   err.accountId = accountId;
@@ -186,7 +186,6 @@ function validateOrder(order) {
   const lowerOrder = String(order).toLowerCase();
   if (!["asc", "desc"].includes(lowerOrder)) {
     throw makeValidationError(
-      `Invalid order parameter: "${order}". Valid values are "asc" or "desc".`,
       qp("order", 'must be either "asc" or "desc".'),
       "order",
       order,
@@ -213,7 +212,7 @@ function validateAsset(code, issuer) {
   if (!code) {
     throw makeInvalidAssetError(
       "Asset code is required.",
-      "Provide a valid asset code (1–12 alphanumeric characters), e.g. USDC."
+      "Provide a valid asset code (14–12 alphanumeric characters), e.g. USDC."
     );
   }
 
@@ -234,14 +233,14 @@ function validateAsset(code, issuer) {
   if (!issuer) {
     throw makeInvalidAssetError(
       "Asset issuer is required.",
-      "Provide the issuer's Stellar public key (a G... address), e.g. GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN."
+      "Provide the issuer's Stellar public key (a G... address), e.g. GA5ZSEYJB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN."
     );
   }
 
   if (!StrKey.isValidEd25519PublicKey(issuer)) {
     throw makeInvalidAssetError(
       `Issuer address "${String(issuer).slice(0, 10)}..." is not a valid Stellar public key.`,
-      "The issuer must be a valid Ed25519 public key starting with G (56 characters), e.g. GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN."
+      "The issuer must be a valid Ed25519 public key starting with G (56 characters), e.g. GA5ZSEYJB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN."
     );
   }
 }
@@ -321,6 +320,30 @@ function validateISODate(value, field) {
   return date;
 }
 
+/**
+ * Validate a transaction hash.
+ *
+ * A valid transaction hash is a 64-character hexadecimal string.
+ * Throws an error with `isInvalidTransactionHash = true` and the standardised
+ * { type: "InvalidTransactionHash", message, suggestion } shape when invalid.
+ *
+ * @param {string} hash - The transaction hash to validate.
+ * @returns {string} The validated hash (same value).
+ * @throws {Error} Throws an error with `isInvalidTransactionHash = true` when invalid.
+ */
+function validateTransactionHash(hash) {
+  const isHex64 = typeof hash === "string" && /^[0-9a-fA-F]{64}$/.test(hash);
+  if (!isHex64) {
+    const err = new Error(`'${hash}' is not a valid transaction hash.`);
+    err.isInvalidTransactionHash = true;
+    err.type = "InvalidTransactionHash";
+    err.suggestion = "Transaction hashes are 64-character hexadecimal strings.";
+    err.status = 400;
+    throw err;
+  }
+  return hash;
+}
+
 module.exports = {
   validateAccountId,
   validateContractId,
@@ -332,4 +355,5 @@ module.exports = {
   validateISODate,
   validateStellarAddress,
   validateCredentialType,
+  validateTransactionHash,
 };

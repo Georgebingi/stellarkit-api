@@ -8,6 +8,7 @@ const { validateAccountId } = require("../utils/validators");
 const { parsePaginationParams } = require("../utils/pagination");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
+const { isNativeAsset } = require("../utils/assetHelpers");
 
 /**
  * Evaluates a claimable balance predicate recursively.
@@ -162,7 +163,7 @@ router.get("/:id/evaluate/:accountId", async (req, res, next) => {
 function normalizeSponsorBalance(balance) {
   // Parse asset string — Horizon returns "native" or "CODE:ISSUER"
   let asset;
-  if (!balance.asset || balance.asset === "native") {
+  if (!balance.asset || isNativeAsset(balance.asset)) {
     asset = { code: "XLM", issuer: null, type: "native" };
   } else {
     const colonIdx = balance.asset.indexOf(":");
