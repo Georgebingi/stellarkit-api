@@ -301,7 +301,7 @@ router.get("/:id/trustlines", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const includeMetadata = req.query.includeMetadata === "true";
     const { assetCode } = req.query;
     const sponsored = req.query.sponsored;
@@ -565,7 +565,7 @@ router.get("/:id/sequence", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `sequence:${id}`;
 
     if (!fresh) {
@@ -1917,7 +1917,7 @@ router.get("/:id", async (req, res, next) => {
     validateAccountId(id);
 
     const cacheKey = `account:${id}`;
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
 
     // Serve from cache unless caller requests a fresh fetch
     if (!fresh) {
@@ -3072,7 +3072,7 @@ router.get("/:id/pool-positions", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `pool-positions:${id}`;
 
     if (!fresh) {
@@ -3466,7 +3466,7 @@ router.get("/:id/transaction-count", async (req, res, next) => {
     const { id } = req.params;
     validateAccountId(id);
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `transaction-count:${id}`;
 
     if (!fresh) {
@@ -3545,7 +3545,7 @@ router.get("/:id/signing-keys", async (req, res, next) => {
       minWeight = parsed;
     }
 
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const cacheKey = `signing-keys:${id}`;
 
     if (!fresh) {

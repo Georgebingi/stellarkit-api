@@ -24,6 +24,7 @@ const bodySizeLimit = require("./middleware/bodySizeLimit");
 const errorHandler = require("./middleware/errorHandler");
 const requestIdMiddleware = require("./middleware/requestId");
 const requestLogger = require("./middleware/requestLogger");
+const metricsCollector = require("./middleware/metricsCollector");
 const apiKeyMiddleware = require("./middleware/apiKeyAuth");
 const sanitize = require("./middleware/sanitize");
 const rejectDuplicateQueryParams = require("./middleware/rejectDuplicateQueryParams");
@@ -52,6 +53,7 @@ const metricsRouter = require("./routes/metrics");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
+const metricsRouter = require("./routes/metrics");
 
 const app = express();
 // Disable server identification header for security
@@ -176,10 +178,14 @@ app.use(compression({ threshold: 1024 }));
 app.use(cors());
 app.use(requestIdMiddleware);
 app.use(requestLogger);
+app.use(metricsCollector);
 app.use(contentTypeValidator);
 app.use(bodySizeLimit);
 app.use(rejectDuplicateQueryParams);
 app.use(hpp({ whitelist: ["limit", "order", "cursor", "operations"] }));
+
+// ── Metrics (excluded from rate limiting) ───────────────────────────────────
+app.use("/metrics", metricsRouter);
 
 // ── Rate Limiting ───────────────────────────────────────────────────────────
 app.use(rateLimiter);
