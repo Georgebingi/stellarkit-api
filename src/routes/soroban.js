@@ -114,14 +114,43 @@ async function loadContractWasm(wasmHash) {
   return Buffer.isBuffer(code) ? code : Buffer.from(code);
 }
 
-async function loadContractCodeEntry(wasmHash) {
-  const rpcServer = requireSorobanServer();
-  const hash = Buffer.isBuffer(wasmHash) ? wasmHash : Buffer.from(wasmHash, "hex");
-  const codeKey = xdr.LedgerKey.contractCode(
-    new xdr.LedgerKeyContractCode({ hash }),
-  );
-  const response = await rpcServer.getLedgerEntries(codeKey);
-  return response.entries && response.entries.length > 0 ? response.entries[0] : null;
+function parseLedgerSequenceParam(rawLedger, fieldName = "ledger") {
+  if (rawLedger === undefined || rawLedger === null || String(rawLedger).trim() === "") {
+    const err = new Error(`Query parameter '${fieldName}' is required.`);
+    err.isValidation = true;
+    err.status = 400;
+    err.field = fieldName;
+    throw err;
+  }
+
+  const ledger = Number(rawLedger);
+  if (!Number.isInteger(ledger) || ledger <= 0) {
+    const err = new Error(`Query parameter '${fieldName}' must be a positive integer.`);
+    err.isValidation = true;
+    err.status = 400;
+    err.field = fieldName;
+    err.receivedValue = rawLedger;
+    throw err;
+  }
+
+  return ledger;
+}
+
+async function loadContractInstanceEntryAtLedger(contractId, ledger) {
+  const entry = await loadContractInstanceEntry(contractId);
+  const lastModifiedLedger = entry.lastModifiedLedgerSeq ?? null;
+
+  if (lastModifiedLedger !== null && ledger < lastModifiedLedger) {
+    throw new StellarKitError(
+      `Contract ${contractId} did not exist on the Stellar ${NETWORK} network at ledger ${ledger}.`,
+      404,
+      "ContractNotFound",
+      null,
+      "Verify the contract ID and ledger sequence are correct."
+    );
+  }
+
+  return entry;
 }
 
 /**
@@ -336,6 +365,44 @@ router.get("/contract/:id/storage", async (req, res, next) => {
     cacheService.set(cacheKey, data, cacheTTL.contractStorage);
     res.set("X-Cache", "MISS");
     return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /soroban/contract/:id/storage/snapshot
+ *
+ * Returns the contract storage entries as they existed at the requested ledger
+ * sequence. This is the historical snapshot view needed for debugging state
+ * changes across time.
+ */
+router.get("/contract/:id/storage/snapshot", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateContractId(id);
+
+    const ledger = parseLedgerSequenceParam(req.query.ledger, "ledger");
+    const entry = await loadContractInstanceEntryAtLedger(id, ledger);
+    const instance = entry.val.contractData().val().instance();
+    const storageMap = instance.storage() || [];
+
+    const entries = storageMap.map((mapEntry) => {
+      const { value: key } = decodeScVal(mapEntry.key());
+      const { value } = decodeScVal(mapEntry.val());
+      return {
+        key,
+        value,
+        lastModifiedLedger: entry.lastModifiedLedgerSeq,
+        expiryLedger: entry.liveUntilLedgerSeq ?? null,
+      };
+    });
+
+    return success(res, {
+      contractId: id,
+      ledger,
+      entries,
+    });
   } catch (err) {
     next(err);
   }
