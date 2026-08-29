@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const { Contract, scValToNative, xdr } = require("@stellar/stellar-sdk");
+const { scValToNative, xdr } = require("@stellar/stellar-sdk");
 const { sorobanServer, NETWORK } = require("../config/stellar");
 const { validateContractId, validateLimit } = require("../utils/validators");
 const { success } = require("../utils/response");
@@ -57,10 +57,27 @@ function requireSorobanServer() {
 
 async function loadContractInstanceEntry(contractId) {
   const rpcServer = requireSorobanServer();
-  const footprint = new Contract(contractId).getFootprint();
-  const response = await rpcServer.getLedgerEntries(footprint);
 
-  if (!response.entries || response.entries.length === 0) {
+  let response;
+  try {
+    response = await rpcServer.getContractData(
+      contractId,
+      xdr.ScVal.scvLedgerKeyContractInstance(),
+    );
+  } catch (err) {
+    if (err && /not found/i.test(err.message)) {
+      throw new StellarKitError(
+        `Contract ${contractId} was not found on the Stellar ${NETWORK} network.`,
+        404,
+        "ContractNotFound",
+        null,
+        "Verify the contract ID is correct and that the contract has been deployed."
+      );
+    }
+    throw err;
+  }
+
+  if (!response || !response.contractData) {
     throw new StellarKitError(
       `Contract ${contractId} was not found on the Stellar ${NETWORK} network.`,
       404,
@@ -70,7 +87,17 @@ async function loadContractInstanceEntry(contractId) {
     );
   }
 
-  return response.entries[0];
+  const contractData = response.contractData;
+  const contractDataEntry =
+    contractData.xdr instanceof xdr.ContractDataEntry
+      ? contractData.xdr
+      : xdr.ContractDataEntry.fromXDR(contractData.xdr, "base64");
+
+  return {
+    val: xdr.LedgerEntryData.contractData(contractDataEntry),
+    lastModifiedLedgerSeq: contractData.lastModifiedLedgerSeq ?? null,
+    liveUntilLedgerSeq: contractData.liveUntilLedgerSeq ?? null,
+  };
 }
 
 async function loadContractWasm(wasmHash) {
@@ -85,6 +112,16 @@ async function loadContractWasm(wasmHash) {
 
   const code = response.entries[0].val.contractCode().code();
   return Buffer.isBuffer(code) ? code : Buffer.from(code);
+}
+
+async function loadContractCodeEntry(wasmHash) {
+  const rpcServer = requireSorobanServer();
+  const hash = Buffer.isBuffer(wasmHash) ? wasmHash : Buffer.from(wasmHash, "hex");
+  const codeKey = xdr.LedgerKey.contractCode(
+    new xdr.LedgerKeyContractCode({ hash }),
+  );
+  const response = await rpcServer.getLedgerEntries(codeKey);
+  return response.entries && response.entries.length > 0 ? response.entries[0] : null;
 }
 
 /**
@@ -141,11 +178,17 @@ router.get("/contract/:id", async (req, res, next) => {
     validateContractId(id);
 
     const rpcServer = requireSorobanServer();
-    const [entry, deployment, latestLedger] = await Promise.all([
+    const [entry, latestLedger] = await Promise.all([
       loadContractInstanceEntry(id),
-      fetchContractDeployment(id),
       rpcServer.getLatestLedger(),
     ]);
+
+    let deployment = {};
+    try {
+      deployment = (await fetchContractDeployment(id)) || {};
+    } catch (err) {
+      deployment = {};
+    }
 
     const instance = entry.val.contractData().val().instance();
     const executable = instance.executable();
@@ -153,17 +196,42 @@ router.get("/contract/:id", async (req, res, next) => {
     const executableType = EXECUTABLE_TYPES[executableTypeName] || executableTypeName;
     const wasmHash =
       executableType === "wasm" ? executable.wasmHash().toString("hex") : null;
+    let deployer = null;
+    let deployedLedger = null;
+    let deployedAt = null;
+
+    if (wasmHash) {
+      const codeEntry = await loadContractCodeEntry(wasmHash);
+      if (codeEntry) {
+        const ext = codeEntry.ext;
+        const extensionV1 =
+          ext && typeof ext.switch === "function" && ext.switch() === 1 && typeof ext.v1 === "function"
+            ? ext.v1()
+            : null;
+        const sponsoringId =
+          extensionV1 && typeof extensionV1.sponsoringId === "function"
+            ? extensionV1.sponsoringId()
+            : null;
+        deployer = sponsoringId ? sponsoringId.toString() : null;
+        deployedLedger = codeEntry.lastModifiedLedgerSeq ?? null;
+      }
+    }
+
+    deployer = deployer ?? deployment.deployer ?? null;
+    deployedLedger = deployedLedger ?? deployment.deployedLedger ?? null;
+    deployedAt = deployment.deployedAt ?? null;
+
     const expiryLedger = entry.liveUntilLedgerSeq ?? null;
     const currentLedger = latestLedger.sequence;
     const isExpired =
-      expiryLedger !== null && typeof currentLedger === "number" && currentLedger > expiryLedger;
+      expiryLedger !== null && typeof currentLedger === "number" && currentLedger >= expiryLedger;
 
     return success(res, {
       contractId: id,
       wasmHash,
-      deployer: deployment.deployer,
-      deployedAt: deployment.deployedAt,
-      deployedLedger: deployment.deployedLedger,
+      deployer,
+      deployedAt,
+      deployedLedger,
       isExpired,
       executable: {
         type: executableType,
