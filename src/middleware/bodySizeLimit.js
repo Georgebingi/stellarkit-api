@@ -53,7 +53,7 @@ const { kb: MAX_KB, expressLimit: EXPRESS_LIMIT } = resolveLimit();
 const bodySizeLimit = express.json({
   limit: EXPRESS_LIMIT,
   verify: (req, res, buf, encoding) => {
-    req.rawBody = buf.toString(encoding || 'utf8');
+    req.rawBody = buf.toString(encoding || "utf8");
   },
 });
 
