@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const registerParamValidation = require("../middleware/validateRouteParams");
 registerParamValidation(router);
-const { server } = require("../config/stellar");
+const { server, NETWORK } = require("../config/stellar");
 const { success, toISOTimestamp} = require("../utils/response");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
@@ -11,7 +11,7 @@ const { StrKey } = require("@stellar/stellar-sdk");
 const { normalizeAssetFromString, normalizeAsset } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
 const { formatAmount } = require("../utils/formatAmount");
-const StellarKitError = require("../utils/StellarKitError");
+const { makeLiquidityPoolNotFoundError } = require("../utils/errors");
 
 function makeAssetQueryValidationError(field, value) {
   const err = new Error(
@@ -99,6 +99,30 @@ function normalizeLiquidityPoolTrade(trade) {
 }
 
 /**
+ * Maps a raw Horizon liquidity pool object to the normalised StellarKit shape.
+ *
+ * @param {object} pool - Raw Horizon liquidity pool record
+ * @returns {object}
+ */
+function mapLiquidityPool(pool) {
+  return {
+    poolId: pool.id,
+    fee: formatAmount(pool.fee_bp),
+    totalShares: formatAmount(pool.total_shares),
+    reserveA: {
+      asset: normalizeAssetFromString(pool.reserves[0].asset),
+      amount: formatAmount(pool.reserves[0].amount),
+    },
+    reserveB: {
+      asset: normalizeAssetFromString(pool.reserves[1].asset),
+      amount: formatAmount(pool.reserves[1].amount),
+    },
+    totalTrustlines: Number(pool.total_trustlines),
+    lastModifiedLedger: Number(pool.last_modified_ledger),
+  };
+}
+
+/**
  * GET /liquidity-pools/:id/trades
  */
 router.get("/:id/trades", async (req, res, next) => {
@@ -107,7 +131,7 @@ router.get("/:id/trades", async (req, res, next) => {
     const { limit, order, cursor } = parsePaginationParams(req.query);
     const baseAssetFilter = parseAssetFilter(req.query.baseAsset, "baseAsset");
     const counterAssetFilter = parseAssetFilter(req.query.counterAsset, "counterAsset");
-    const fresh = req.query.fresh === "true";
+    const fresh = req.query.fresh === true || req.query.fresh === "true";
     const normalizedCursor = cursor || "";
     const normalizedBaseAsset = baseAssetFilter ? baseAssetFilter.cacheToken : "";
     const normalizedCounterAsset = counterAssetFilter ? counterAssetFilter.cacheToken : "";
@@ -124,7 +148,15 @@ router.get("/:id/trades", async (req, res, next) => {
     let query = server.trades().forLiquidityPool(id).limit(limit).order(order);
     if (cursor) query = query.cursor(cursor);
 
-    const tradesResponse = await query.call();
+    let tradesResponse;
+    try {
+      tradesResponse = await query.call();
+    } catch (err) {
+      if (err.response && err.response.status === 404) {
+        return next(makeLiquidityPoolNotFoundError(id, NETWORK));
+      }
+      throw err;
+    }
     const records = tradesResponse.records || [];
     const filteredRecords = records.filter((trade) => {
       if (baseAssetFilter && !tradeAssetMatchesFilter(trade, "base", baseAssetFilter)) {
@@ -185,9 +217,7 @@ router.get("/:id/profitability", async (req, res, next) => {
     if (poolResult.status === "rejected") {
       const err = poolResult.reason;
       if (err.response && err.response.status === 404) {
-        const notFoundErr = new Error("Liquidity pool not found.");
-        notFoundErr.status = 404;
-        return next(notFoundErr);
+        return next(makeLiquidityPoolNotFoundError(id, NETWORK));
       }
       throw err;
     }
@@ -263,9 +293,7 @@ router.get("/:id/reserve-ratio", async (req, res, next) => {
       pool = await server.liquidityPools().liquidityPoolId(id).call();
     } catch (err) {
       if (err.response && err.response.status === 404) {
-        const notFoundErr = new Error("Liquidity pool not found.");
-        notFoundErr.status = 404;
-        return next(notFoundErr);
+        return next(makeLiquidityPoolNotFoundError(id, NETWORK));
       }
       throw err;
     }
@@ -331,7 +359,7 @@ router.get("/:id", async (req, res, next) => {
       pool = await server.liquidityPools().liquidityPoolId(id).call();
     } catch (err) {
       if (err.response && err.response.status === 404) {
-        return next(poolNotFoundError(id));
+        return next(makeLiquidityPoolNotFoundError(id, NETWORK));
       }
       throw err;
     }

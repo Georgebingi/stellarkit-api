@@ -368,6 +368,20 @@ function errorHandler(err, req, res, next) {
     }, req));
   }
 
+  // LiquidityPoolNotFound errors (Horizon 404 on pool lookup)
+  if (err.isLiquidityPoolNotFound) {
+    logError(404, req, err.message);
+    return errorResponse(res, 404, withRequestId({
+      success: false,
+      error: {
+        type: "LiquidityPoolNotFound",
+        message: err.message,
+        suggestion:
+          "Verify the pool ID is correct and that the pool has not been dissolved.",
+      },
+    }, req));
+  }
+
   // TomlFetchFailed errors — issuer's stellar.toml could not be fetched
   // (network error, missing file, or invalid format)
   if (err.isTomlFetchFailed) {

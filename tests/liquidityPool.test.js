@@ -317,6 +317,26 @@ it("normalizes asset objects to { code, issuer, type }", async () => {
       expect(res.body.error.type).toBe("ValidationError");
       expect(res.body.error.field).toBe("counterAsset");
     });
+
+    it("returns LiquidityPoolNotFound for a pool that does not exist", async () => {
+      const error = new Error("Not Found");
+      error.response = { status: 404 };
+      server.trades.mockReturnValue({
+        forLiquidityPool: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        cursor: jest.fn().mockReturnThis(),
+        call: jest.fn().mockRejectedValue(error),
+      });
+
+      const res = await request(app).get(`/liquidity-pools/UNKNOWN_ID/trades`);
+
+      expect(res.statusCode).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.type).toBe("LiquidityPoolNotFound");
+      expect(res.body.error.message).toContain("not found");
+      expect(res.body.error.suggestion).toContain("pool ID");
+    });
   });
 
   describe("GET /liquidity-pools/:id/profitability", () => {
@@ -388,6 +408,7 @@ it("normalizes asset objects to { code, issuer, type }", async () => {
       const res = await request(app).get(`/liquidity-pools/UNKNOWN_ID/profitability`);
 
       expect(res.statusCode).toBe(404);
+      expect(res.body.error.type).toBe("LiquidityPoolNotFound");
       expect(res.body.error.message).toContain("not found");
     });
   });
@@ -477,6 +498,7 @@ it("normalizes asset objects to { code, issuer, type }", async () => {
       const res = await request(app).get(`/liquidity-pools/UNKNOWN_ID/reserve-ratio`);
 
       expect(res.statusCode).toBe(404);
+      expect(res.body.error.type).toBe("LiquidityPoolNotFound");
       expect(res.body.error.message).toContain("not found");
     });
   });
