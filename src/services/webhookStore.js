@@ -46,17 +46,21 @@ class WebhookStore {
   /**
    * Register a new webhook and return the stored entry.
    *
-   * @param {{ url: string, events: string[], accountId?: string|null }} params
-   * @returns {{ webhookId: string, url: string, events: string[], accountId: string|null, createdAt: string, registeredAt: string }}
+   * @param {{ url: string, events: string[], accountId?: string|null, minAmount?: number|string|null, assetCode?: string|null, assetIssuer?: string|null }} params
+   * @returns {{ webhookId: string, url: string, events: string[], accountId: string|null, minAmount: number|null, assetCode: string|null, assetIssuer: string|null, createdAt: string, registeredAt: string }}
    */
-  register({ url, events, accountId }) {
+  register({ url, events, accountId, minAmount, assetCode, assetIssuer }) {
     const webhookId    = generateId();
     const createdAt    = new Date().toISOString();
+    const normalizedMinAmount = minAmount === undefined || minAmount === null || minAmount === "" ? null : Number(minAmount);
     const entry        = {
       webhookId,
       url,
       events: Array.isArray(events) ? events : [],
       accountId: accountId || null,
+      minAmount: Number.isFinite(normalizedMinAmount) ? normalizedMinAmount : null,
+      assetCode: typeof assetCode === "string" && assetCode.trim() !== "" ? assetCode.trim() : null,
+      assetIssuer: typeof assetIssuer === "string" && assetIssuer.trim() !== "" ? assetIssuer.trim() : null,
       createdAt,
       registeredAt: createdAt,
     };

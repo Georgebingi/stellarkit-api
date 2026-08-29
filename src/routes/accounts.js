@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const accountRouter = require("./account");
 const { server, NETWORK } = require("../config/stellar");
 const { success } = require("../utils/response");
 const {
@@ -27,7 +28,7 @@ function extractNativeBalance(account) {
   };
 }
 
-function validateAddressBatch(addresses, fieldName = "addresses") {
+function validateAddressBatch(addresses, fieldName = "addresses", maxAddresses = 30) {
   if (!addresses || !Array.isArray(addresses)) {
     const err = new Error(`Property '${fieldName}' is required and must be an array.`);
     err.isValidation = true;
@@ -44,8 +45,8 @@ function validateAddressBatch(addresses, fieldName = "addresses") {
     throw err;
   }
 
-  if (addresses.length > 30) {
-    const err = new Error("Maximum of 30 addresses allowed per request.");
+  if (addresses.length > maxAddresses) {
+    const err = new Error(`Maximum of ${maxAddresses} addresses allowed per request.`);
     err.isValidation = true;
     err.status = 400;
     err.field = fieldName;
@@ -150,6 +151,60 @@ router.post("/native-balances", async (req, res, next) => {
           } else {
             throw err;
           }
+        }
+      }),
+    );
+
+    return success(res, { results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function validateEffectsLimit(limit) {
+  if (limit === undefined || limit === null || limit === "") {
+    return 10;
+  }
+
+  const numericLimit = Number(limit);
+  if (!Number.isFinite(numericLimit) || !Number.isInteger(numericLimit) || numericLimit < 1) {
+    const err = new Error("Property 'limit' must be a positive integer.");
+    err.isValidation = true;
+    err.status = 400;
+    err.field = "limit";
+    err.receivedValue = limit;
+    throw err;
+  }
+
+  return Math.min(numericLimit, 10);
+}
+
+router.post("/effects", async (req, res, next) => {
+  try {
+    const { addresses, limit } = req.body || {};
+    validateAddressBatch(addresses, "addresses", 10);
+    const normalizedLimit = validateEffectsLimit(limit);
+
+    const results = {};
+
+    await Promise.all(
+      addresses.map(async (address) => {
+        try {
+          const response = await server
+            .effects()
+            .forAccount(address)
+            .order("desc")
+            .limit(normalizedLimit)
+            .call();
+
+          const effects = (response.records || []).map((effect) => accountRouter.normalizeEffect(effect));
+          results[address] = { effects };
+        } catch (err) {
+          if (err && err.response && err.response.status === 404) {
+            results[address] = { effects: [] };
+            return;
+          }
+          throw err;
         }
       }),
     );
