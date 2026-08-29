@@ -30,6 +30,7 @@ const rejectDuplicateQueryParams = require("./middleware/rejectDuplicateQueryPar
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
 const metricsService = require("./services/metrics");
+const routeCounter = require("./middleware/routeCounter");
 
 const networkStatusRouter = require("./routes/networkStatus");
 const webhooksRouter = require("./routes/webhooks");
@@ -272,6 +273,7 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/fee-estimate?operations=N", description: "Fee estimate for N operations" },
         { method: "GET", path: "/fee-estimate/surge-status", description: "Identify fee surge periods and get actionable recommendations" },
         { method: "GET", path: "/fee-estimate/trends", description: "Analyze fee trends across last 50 ledgers with statistical summary" },
+        { method: "POST", path: "/fee-estimate/batch", description: "Batch fee estimates for up to 10 transaction types in a single call" },
         { method: "GET", path: "/account/:id", description: "Account details, balances, signers" },
         { method: "GET", path: "/account/:id/reserve-breakdown", description: "Per-type breakdown of the minimum XLM reserve requirement" },
         { method: "GET", path: "/account/:id/age", description: "Account age and longevity metrics" },

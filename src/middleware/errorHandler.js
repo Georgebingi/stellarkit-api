@@ -2,11 +2,15 @@
  * Centralised error handler middleware.
  * Formats Horizon / Stellar SDK errors into consistent JSON responses.
  * All non-Horizon errors are wrapped in StellaKitError for consistency.
+ *
+ * Production safety: stack traces and internal file paths are never included
+ * in responses when NODE_ENV=production. Full error details remain available
+ * in development and test environments.
  */
 const logger = require("../utils/logger");
 const { translateHorizonError } = require("../utils/horizonErrors");
 const { mapHorizonErrorToStatus } = require("../utils/horizonStatusMapper");
-const StellaKitError = require("../utils/StellaKitError");
+const StellaKitError = require("../utils/StellarKitError");
 const {
   HORIZON_TIMEOUT_MESSAGE,
   HORIZON_TIMEOUT_SUGGESTION,
@@ -14,6 +18,40 @@ const {
 } = require("../utils/errors");
 const { NETWORK } = require("../config/stellar");
 const metrics = require("../services/metrics");
+
+/**
+ * Returns true when the application is running in production mode.
+ * Used to gate whether internal error details are included in responses.
+ */
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * Strips internal implementation details from a message string when running
+ * in production. Removes:
+ *   - Absolute file paths (Windows and POSIX)
+ *   - Stack frame lines ("at SomeFunction (file:line:col)")
+ *
+ * In non-production environments the message is returned unchanged so
+ * developers see the full error text in development / test runs.
+ *
+ * @param {string} message - Raw error message that may contain internals.
+ * @param {string} [fallback="An unexpected error occurred."] - Safe fallback for production.
+ * @returns {string} Sanitised message.
+ */
+function sanitizeMessage(message, fallback = "An unexpected error occurred.") {
+  if (!isProduction()) return message;
+  if (!message || typeof message !== "string") return fallback;
+
+  // Strip Windows absolute paths (C:\...) and POSIX absolute paths (/...)
+  const hasFilePath = /([A-Za-z]:\\[^\s]+|\/[^\s]*\/[^\s]+)/.test(message);
+  // Strip stack frame lines produced by V8 ("    at Foo (bar.js:1:2)")
+  const hasStackFrame = /^\s+at\s+/m.test(message);
+
+  if (hasFilePath || hasStackFrame) return fallback;
+  return message;
+}
 
 /**
  * Logs 4xx and 5xx responses using the structured logger.
@@ -206,7 +244,7 @@ function errorHandler(err, req, res, next) {
     const status = mappedStatus ?? err.response.status ?? 400;
 
     if (isTransactionSubmissionFailure(horizonError)) {
-      const body = buildTransactionSubmissionFailedError horizonError);
+      const body = buildTransactionSubmissionFailedError(horizonError);
       logError(status, req, body.message);
       return errorResponse(res, status, withRequestId({ success: false, error: body }, req));
     }
@@ -253,9 +291,7 @@ function errorHandler(err, req, res, next) {
       error: {
         type: "InternalError",
         title: "Internal Server Error",
-        detail: process.env.NODE_ENV === "production"
-          ? "An unexpected error occurred."
-          : err.message,
+        detail: sanitizeMessage(err.message),
       },
     }, req));
   }
@@ -373,14 +409,57 @@ function errorHandler(err, req, res, next) {
     }, req));
   }
 
+  // HorizonTimeout errors — Horizon did not respond in time
+  if (isHorizonTimeoutError(err)) {
+    logError(504, req, HORIZON_TIMEOUT_MESSAGE);
+    return errorResponse(res, 504, withRequestId({
+      success: false,
+      error: {
+        type: "HorizonTimeout",
+        message: HORIZON_TIMEOUT_MESSAGE,
+        suggestion: HORIZON_TIMEOUT_SUGGESTION,
+      },
+    }, req));
+  }
+
+  // ValidationError — duck-typed validation failures (isValidation flag)
+  if (err.isValidation) {
+    logError(400, req, err.message);
+    return errorResponse(res, 400, withRequestId({
+      success: false,
+      error: {
+        type: "ValidationError",
+        message: err.message,
+        field: err.field,
+        receivedValue: err.receivedValue,
+        expectedFormat: err.expectedFormat,
+        suggestion: err.expectedFormat ? `Expected format: ${err.expectedFormat}` : undefined,
+      },
+    }, req));
+  }
+
+  // InsufficientXLMReserve — account lacks required XLM reserve
+  if (err.isInsufficientXLMReserve) {
+    const body = {
+      type: "ServerError",
+      message: err.message,
+    };
+    if (err.suggestion) body.suggestion = err.suggestion;
+    logError(500, req, err.message);
+    return errorResponse(res, 500, withRequestId({
+      success: false,
+      error: body,
+    }, req));
+  }
+
   // Fallback for any other error
   const status = err.status || err.statusCode || 500;
-  const message = err.message || "Internal Server Error";
-  logError(status, req, message);
+  const message = sanitizeMessage(err.message || "Internal Server Error");
+  logError(status, req, err.message || "Internal Server Error");
   return errorResponse(res, status, withRequestId({
     success: false,
     error: {
-      type: err.type || "InternalError",
+      type: err.type || "ServerError",
       message,
     },
   }, req));
