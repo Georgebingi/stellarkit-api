@@ -198,6 +198,106 @@ describe("Liquidity Pool Profitability API", () => {
       expect(res.body.data.cursor).toBeNull();
     });
 
+    it("returns camelCase fields with no raw Horizon fields", async () => {
+  mockTradeQuery([
+    {
+      id: "trade-1",
+      paging_token: "pt-1",
+      ledger_close_time: "2026-01-01T00:00:00Z",
+      base_is_seller: true,
+      base_asset_type: "native",
+      base_amount: "10",
+      counter_asset_type: "credit_alphanum4",
+      counter_asset_code: "USDC",
+      counter_asset_issuer: issuerA,
+      counter_amount: "20.5",
+      price_r: { n: 1, d: 8 },
+      offer_id: "0",
+    },
+  ]);
+
+  const res = await request(app).get(`/liquidity-pools/${poolId}/trades`);
+  const trade = res.body.data.items[0];
+
+  expect(trade).not.toHaveProperty("paging_token");
+  expect(trade).not.toHaveProperty("base_asset_type");
+  expect(trade).not.toHaveProperty("counter_asset_type");
+  expect(trade).not.toHaveProperty("priceNumerator");
+  expect(trade).not.toHaveProperty("priceDenominator");
+  expect(trade).toHaveProperty("ledgerCloseTime");
+  expect(trade).toHaveProperty("baseAsset");
+  expect(trade).toHaveProperty("counterAsset");
+  });
+
+  it("converts price_r to a decimal string", async () => {
+  mockTradeQuery([
+    {
+      id: "trade-1",
+      paging_token: "pt-1",
+      base_asset_type: "native",
+      base_amount: "10",
+      counter_asset_type: "credit_alphanum4",
+      counter_asset_code: "USDC",
+      counter_asset_issuer: issuerA,
+      counter_amount: "20.5",
+      price_r: { n: 1, d: 8 },
+    },
+  ]);
+
+  const res = await request(app).get(`/liquidity-pools/${poolId}/trades`);
+  const trade = res.body.data.items[0];
+
+  expect(typeof trade.price).toBe("string");
+  expect(trade.price).toBe("0.1250000");
+});
+
+it("formats amounts as 7-decimal strings", async () => {
+  mockTradeQuery([
+    {
+      id: "trade-1",
+      paging_token: "pt-1",
+      base_asset_type: "native",
+      base_amount: "10",
+      counter_asset_type: "credit_alphanum4",
+      counter_asset_code: "USDC",
+      counter_asset_issuer: issuerA,
+      counter_amount: "20.5",
+      price_r: { n: 1, d: 8 },
+    },
+  ]);
+
+  const res = await request(app).get(`/liquidity-pools/${poolId}/trades`);
+  const trade = res.body.data.items[0];
+
+  expect(trade.baseAmount).toBe("10.0000000");
+  expect(trade.counterAmount).toBe("20.5000000");
+});
+
+it("normalizes asset objects to { code, issuer, type }", async () => {
+  mockTradeQuery([
+    {
+      id: "trade-1",
+      paging_token: "pt-1",
+      base_asset_type: "native",
+      base_amount: "10",
+      counter_asset_type: "credit_alphanum4",
+      counter_asset_code: "USDC",
+      counter_asset_issuer: issuerA,
+      counter_amount: "20.5",
+      price_r: { n: 1, d: 8 },
+    },
+  ]);
+
+  const res = await request(app).get(`/liquidity-pools/${poolId}/trades`);
+  const trade = res.body.data.items[0];
+
+  expect(Object.keys(trade.baseAsset).sort()).toEqual(["code", "issuer", "type"]);
+  expect(trade.baseAsset).toEqual({ code: "XLM", issuer: null, type: "native" });
+
+  expect(Object.keys(trade.counterAsset).sort()).toEqual(["code", "issuer", "type"]);
+  expect(trade.counterAsset).toEqual({ code: "USDC", issuer: issuerA, type: "credit_alphanum4" });
+  });
+
     it("returns 400 for invalid baseAsset format", async () => {
       const res = await request(app).get(
         `/liquidity-pools/${poolId}/trades?baseAsset=INVALID_FORMAT`,
@@ -216,6 +316,26 @@ describe("Liquidity Pool Profitability API", () => {
       expect(res.body.success).toBe(false);
       expect(res.body.error.type).toBe("ValidationError");
       expect(res.body.error.field).toBe("counterAsset");
+    });
+
+    it("returns LiquidityPoolNotFound for a pool that does not exist", async () => {
+      const error = new Error("Not Found");
+      error.response = { status: 404 };
+      server.trades.mockReturnValue({
+        forLiquidityPool: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        cursor: jest.fn().mockReturnThis(),
+        call: jest.fn().mockRejectedValue(error),
+      });
+
+      const res = await request(app).get(`/liquidity-pools/UNKNOWN_ID/trades`);
+
+      expect(res.statusCode).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.type).toBe("LiquidityPoolNotFound");
+      expect(res.body.error.message).toContain("not found");
+      expect(res.body.error.suggestion).toContain("pool ID");
     });
   });
 
@@ -288,6 +408,7 @@ describe("Liquidity Pool Profitability API", () => {
       const res = await request(app).get(`/liquidity-pools/UNKNOWN_ID/profitability`);
 
       expect(res.statusCode).toBe(404);
+      expect(res.body.error.type).toBe("LiquidityPoolNotFound");
       expect(res.body.error.message).toContain("not found");
     });
   });
@@ -377,6 +498,7 @@ describe("Liquidity Pool Profitability API", () => {
       const res = await request(app).get(`/liquidity-pools/UNKNOWN_ID/reserve-ratio`);
 
       expect(res.statusCode).toBe(404);
+      expect(res.body.error.type).toBe("LiquidityPoolNotFound");
       expect(res.body.error.message).toContain("not found");
     });
   });
