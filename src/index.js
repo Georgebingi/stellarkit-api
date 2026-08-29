@@ -25,6 +25,8 @@ const accountRouter = require("./routes/account");
 const transactionsRouter = require("./routes/transactions");
 const assetRouter = require("./routes/asset");
 const dexRouter = require("./routes/dex");
+const { validateAccountId } = require("./utils/validators");
+const { success } = require("./utils/response");
 const liquidityPoolRouter = require("./routes/liquidityPool");
 const streamRouter = require("./routes/stream");
 const utilsRouter = require("./routes/utils");
@@ -210,6 +212,68 @@ app.use(apiKeyMiddleware);
 app.use("/network-status", etagMiddleware, networkStatusRouter);
 app.use("/fee-estimate", etagMiddleware, feeEstimateRouter);
 const accountCounterpartiesRouter = require("./routes/account.counterparties");
+const accountsBatchRouter = express.Router();
+accountsBatchRouter.post("/multisig-info", async (req, res, next) => {
+  try {
+    const { accountIds } = req.body;
+
+    if (!Array.isArray(accountIds)) {
+      const err = new Error("Property 'accountIds' is required and must be an array.");
+      err.isValidation = true;
+      err.field = "accountIds";
+      err.expectedFormat = "[" + "accountId1, accountId2, ...]";
+      throw err;
+    }
+
+    if (accountIds.length === 0) {
+      return success(res, { items: [], total: 0 });
+    }
+
+    if (accountIds.length > 20) {
+      const err = new Error("Maximum of 20 account IDs allowed per request.");
+      err.isValidation = true;
+      err.field = "accountIds";
+      err.expectedFormat = "up to 20 account IDs";
+      throw err;
+    }
+
+    const validAccounts = accountIds.map((accountId) => {
+      validateAccountId(accountId);
+      return accountId;
+    });
+
+    const results = await Promise.all(
+      validAccounts.map(async (accountId) => {
+        const account = await server.loadAccount(accountId);
+        const thresholds = account.thresholds || {};
+        const signers = (account.signers || []).map((signer) => ({
+          key: signer.key,
+          weight: signer.weight,
+          type: signer.type,
+        }));
+
+        return {
+          accountId,
+          signers,
+          thresholds: {
+            low: thresholds.low_threshold ?? null,
+            med: thresholds.med_threshold ?? null,
+            high: thresholds.high_threshold ?? null,
+          },
+          signerCount: signers.length,
+        };
+      }),
+    );
+
+    return success(res, {
+      items: results,
+      total: results.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+app.use("/accounts", accountsBatchRouter);
 app.use("/account", etagMiddleware, accountRouter);
 app.use("/account", etagMiddleware, accountCounterpartiesRouter);
 app.use("/transactions", transactionsRouter);
@@ -246,10 +310,12 @@ app.get("/", (req, res) => {
         { method: "GET", path: "/account/:id", description: "Account details, balances, signers" },
         { method: "GET", path: "/account/:id/age", description: "Account age and longevity metrics" },
         { method: "GET", path: "/account/:id/balances", description: "XLM and asset balances for an account" },
+        { method: "GET", path: "/account/:id/history", description: "Unified activity feed combining account operations and effects" },
         { method: "GET", path: "/account/:id/sequence", description: "Current sequence number for an account" },
         { method: "GET", path: "/account/:id/freeze-status/:assetCode/:assetIssuer", description: "Check if an asset is frozen on an account" },
         { method: "GET", path: "/account/:id/can-receive/:assetCode/:assetIssuer", description: "Check if an account can receive a specific asset" },
         { method: "POST", path: "/account/:id/multisig-plan", description: "Plan multisig transactions by calculating signer combinations for each threshold" },
+        { method: "POST", path: "/accounts/multisig-info", description: "Batch multisig configuration lookup for multiple accounts" },
         { method: "GET", path: "/account/:id/pool-positions", description: "Calculate liquidity pool positions and share values" },
         { method: "GET", path: "/account/:id/transactions/search", description: "Search account transactions by memo content" },
         { method: "GET", path: "/account/:id/volume", description: "Total transaction volume by asset over a time period" },
