@@ -1697,6 +1697,8 @@ function normalizeEffect(eff) {
   return { ...base };
 }
 
+router.normalizeEffect = normalizeEffect;
+
 /**
  * GET /account/:id/effects
  *

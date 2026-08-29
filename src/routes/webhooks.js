@@ -34,6 +34,22 @@ function validateRegistration(body) {
       return "accountId must be a non-empty string when provided.";
     }
   }
+  if (body.minAmount !== undefined && body.minAmount !== null && body.minAmount !== "") {
+    const parsedMinAmount = Number(body.minAmount);
+    if (!Number.isFinite(parsedMinAmount) || parsedMinAmount < 0) {
+      return "minAmount must be a non-negative number or numeric string when provided.";
+    }
+  }
+  if (body.assetCode !== undefined && body.assetCode !== null && body.assetCode !== "") {
+    if (typeof body.assetCode !== "string" || body.assetCode.trim() === "") {
+      return "assetCode must be a non-empty string when provided.";
+    }
+  }
+  if (body.assetIssuer !== undefined && body.assetIssuer !== null && body.assetIssuer !== "") {
+    if (typeof body.assetIssuer !== "string" || body.assetIssuer.trim() === "") {
+      return "assetIssuer must be a non-empty string when provided.";
+    }
+  }
   return null;
 }
 
@@ -49,6 +65,9 @@ function toWebhookListItem(entry) {
     url: entry.url,
     events: entry.events,
     accountId: entry.accountId ?? null,
+    minAmount: entry.minAmount ?? null,
+    assetCode: entry.assetCode ?? null,
+    assetIssuer: entry.assetIssuer ?? null,
     createdAt: entry.createdAt || entry.registeredAt,
   };
 }
@@ -89,6 +108,9 @@ router.post("/", webhookSignatureAuth, (req, res, next) => {
       url:       req.body.url.trim(),
       events:    req.body.events.map((e) => String(e).trim()),
       accountId: req.body.accountId ? String(req.body.accountId).trim() : null,
+      minAmount: req.body.minAmount ?? null,
+      assetCode: req.body.assetCode ?? null,
+      assetIssuer: req.body.assetIssuer ?? null,
     });
 
     return res.status(201).json({ success: true, data: entry });

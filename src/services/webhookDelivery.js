@@ -35,12 +35,49 @@ class WebhookDelivery {
    * @param {Object} payload - The event payload to send.
    * @returns {Promise<Array>} Array of delivery result objects.
    */
+  matchesPaymentFilters(webhook, payment) {
+    if (!webhook || !payment) {
+      return false;
+    }
+
+    if (webhook.minAmount !== undefined && webhook.minAmount !== null && webhook.minAmount !== "") {
+      const paymentAmount = Number(payment.amount ?? payment.starting_balance ?? 0);
+      if (!Number.isFinite(paymentAmount) || paymentAmount < Number(webhook.minAmount)) {
+        return false;
+      }
+    }
+
+    if (webhook.assetCode !== undefined && webhook.assetCode !== null && webhook.assetCode !== "") {
+      const code = payment.asset && payment.asset.code ? payment.asset.code : (payment.assetCode || payment.asset_code || "");
+      if (!String(code || "").trim() || String(code).toUpperCase() !== String(webhook.assetCode).trim().toUpperCase()) {
+        return false;
+      }
+    }
+
+    if (webhook.assetIssuer !== undefined && webhook.assetIssuer !== null && webhook.assetIssuer !== "") {
+      const issuer = payment.asset && payment.asset.issuer ? payment.asset.issuer : (payment.assetIssuer || payment.asset_issuer || "");
+      if (!String(issuer || "").trim() || String(issuer) !== String(webhook.assetIssuer).trim()) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   async triggerWebhooks(webhooks, payload) {
     if (!webhooks || webhooks.length === 0) {
       return [];
     }
 
-    const deliveryPromises = webhooks.map((webhook) =>
+    const filteredWebhooks = payload && payload.payment
+      ? webhooks.filter((webhook) => this.matchesPaymentFilters(webhook, payload.payment))
+      : webhooks;
+
+    if (filteredWebhooks.length === 0) {
+      return [];
+    }
+
+    const deliveryPromises = filteredWebhooks.map((webhook) =>
       this.deliverWebhook(webhook, payload),
     );
 
