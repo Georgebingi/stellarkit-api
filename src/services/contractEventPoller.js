@@ -2,7 +2,7 @@
  * Contract event poller.
  *
  * Polls the Soroban RPC for on-chain contract events and forwards each one to
- * the webhook delivery service. The poller is deliberately thin — it resolves
+ * the webhook delivery service. The poller is deliberately thin -- it resolves
  * the raw Soroban event into a clean, serialisable payload and then delegates
  * delivery to `webhookDelivery.deliverContractEvent`.
  *
@@ -61,7 +61,7 @@ function normaliseEvent(rawEvent) {
     event: "contract.event",
     contractId: rawEvent.contractId,
     eventType,
-    topic: topics,
+    topic,
     value,
     ledger: rawEvent.ledger,
   };
@@ -123,4 +123,148 @@ function stop() {
   }
 }
 
-module.exports = { start, stop, poll, normaliseEvent };
+/**
+ * Get the full metadata for a Soroban contract from the Stellar RPC.
+ *
+ * Uses `getContractData` (with the special contract-instance key) to fetch the
+ * contract's executable and deployer, and `getLedgerEntries` to obtain the
+ * instance's expiration ledger and deployment ledger. The raw RPC response is
+ * normalised to the StellarKit contract shape.
+ *
+ * @param {string} contractId  Soroban contract ID (hex string)
+ * @returns {Promise<object|null>}  Normalised contract metadata, or null when
+ *   the contract does not exist.
+ */
+async function getContractById(contractId) {
+  if (!sorobanServer) {
+    throw new Error("Soroban server not configured");
+  }
+
+  try {
+    const { xdr } = require("@stellar/stellar-sdk");
+
+    // The contract instance is stored under a special SCVal key.
+    const instanceKey = xdr.ScVal.scvLedgerKeyContractInstance();
+
+    // 1. Fetch the contract instance data (contains executable, deployer, etc.)
+    const contractData = await sorobanServer.getContractData(contractId, instanceKey);
+
+    // 2. Decode the instance value to a plain object.
+    const instance = decodeVal(contractData.value);
+
+    // Extract wasmHash and deployer.
+    let wasmHash = null;
+    if (instance && instance.executable) {
+      wasmHash =
+        instance.executable.wasmHash ||
+        instance.executable.wasm_id ||
+        instance.executable.hash ||
+        null;
+    }
+
+    let deployer = null;
+    if (instance && instance.deployable) {
+      deployer = instance.deployable.deployed || instance.deployable.address || null;
+      if (deployer && typeof deployer === "object") {
+        deployer = deployer.address || deployer.account || null;
+      }
+      if (deployer && typeof deployer !== "string") {
+        deployer = decodeVal(deployer);
+      }
+    }
+
+    if (!wasmHash) {
+      throw new Error("Unable to determine wasm hash from contract instance");
+    }
+
+    // 3. Build ledger keys for the instance and the code entry.
+    const contractAddress = xdr.ScAddress.scAddressTypeContract(
+      xdr.Hash.fromString(contractId),
+    );
+
+    const instanceLedgerKey = xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: contractAddress,
+        key: instanceKey,
+      }),
+    );
+
+    const codeLedgerKey = xdr.LedgerKey.contractCode(
+      xdr.Hash.fromString(wasmHash),
+    );
+
+    // 4. Fetch the ledger entries to get expiration and deployment info.
+    const ledgerEntries = await sorobanServer.getLedgerEntries([
+      instanceLedgerKey,
+      codeLedgerKey,
+    ]);
+
+    const entries = ledgerEntries.entries || [];
+
+    let expiryLedger = null;
+    for (const entry of entries) {
+      if (entry.liveUntilLedgerSeq) {
+        expiryLedger = entry.liveUntilLedgerSeq;
+        break;
+      }
+      if (entry.expirationLedgerSeq) {
+        expiryLedger = entry.expirationLedgerSeq;
+        break;
+      }
+    }
+    if (expiryLedger == null) {
+      expiryLedger =
+        contractData.expirationLedgerSeq ||
+        contractData.liveUntilLedgerSeq ||
+        null;
+    }
+
+    const deployedLedger = contractData.lastModifiedLedgerSeq || null;
+
+    // 5. Convert the deployment ledger to a timestamp.
+    let deployedAt = null;
+    if (deployedLedger != null) {
+      try {
+        const ledger = await sorobanServer.getLedger(deployedLedger);
+        if (ledger && ledger.header) {
+          const header = xdr.LedgerHeader.fromXDR(ledger.header, "base64");
+          const timestamp = header.scpValue.closeTime;
+          deployedAt = new Date(Number(timestamp) * 1000).toISOString();
+        }
+      } catch (err) {
+        // If ledger lookup fails we leave deployedAt null.
+        logger.warn({ err: err.message, deployedLedger }, "[POLLER] Failed to resolve deployment ledger time");
+      }
+    }
+
+    // 6. Determine the current ledger for isExpired.
+    const latestLedger = await sorobanServer.getLatestLedger();
+    const currentLedger =
+      typeof latestLedger === "number"
+        ? latestLedger
+        : (latestLedger && latestLedger.sequence) || null;
+
+    const isExpired =
+      currentLedger != null && expiryLedger != null
+        ? currentLedger > expiryLedger
+        : false;
+
+    return {
+      contractId,
+      wasmHash,
+      deployer,
+      deployedLedger,
+      deployedAt,
+      isExpired,
+      expiryLedger,
+    };
+  } catch (err) {
+    // RPC throws 404 when the contract does not exist.
+    if (err && err.response && err.response.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+module.exports = { start, stop, poll, normaliseEvent, getContractById };
