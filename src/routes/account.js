@@ -2718,6 +2718,9 @@ router.get("/:id/inactivity", async (req, res, next) => {
 
 /**
  * GET /account/:id/can-receive/:assetCode/:assetIssuer
+ *
+ * Checks whether an account can receive a specific asset (trustline, authorization, capacity).
+ * Returns { canReceive, reason } where reason is null when canReceive is true.
  */
 router.get(
   "/:id/can-receive/:assetCode/:assetIssuer",
@@ -2728,11 +2731,9 @@ router.get(
       validateAssetCode(assetCode);
 
       const normalizedAssetCode = assetCode.toUpperCase();
-      const normalizedAssetIssuer =
-        normalizedAssetCode === "XLM" ? assetIssuer.toLowerCase() : assetIssuer;
 
       if (normalizedAssetCode === "XLM") {
-        if (normalizedAssetIssuer !== "native") {
+        if (assetIssuer.toLowerCase() !== "native") {
           const err = new Error(
             'Invalid asset issuer for XLM. Use "native" as the issuer.',
           );
@@ -2740,28 +2741,12 @@ router.get(
           err.status = 400;
           throw err;
         }
-      } else {
-        validateAccountId(assetIssuer);
+        await withHorizonTiming(req, () => server.loadAccount(id));
+        return success(res, { canReceive: true, reason: null });
       }
 
+      validateAccountId(assetIssuer);
       const account = await withHorizonTiming(req, () => server.loadAccount(id));
-
-      if (normalizedAssetCode === "XLM") {
-        return success(res, {
-          accountId: account.id,
-          asset: normalizeAsset("XLM", null, "native"),
-          canReceive: true,
-          reasons: [],
-          trustlineExists: true,
-          isAuthorized: true,
-          availableCapacity: null,
-          currentBalance: parseFloat(
-            (account.balances || []).find((b) => isNativeAsset(b))
-              ?.balance || "0",
-          ),
-          limit: null,
-        });
-      }
 
       const trustline = (account.balances || []).find(
         (b) =>
@@ -2771,10 +2756,13 @@ router.get(
       );
 
       if (!trustline) {
-        return next(makeTrustlineNotFoundError(id, normalizedAssetCode, assetIssuer));
+        return success(res, { canReceive: false, reason: "no_trustline" });
       }
 
-      const isAuthorized = trustline.is_authorized === true;
+      if (trustline.is_authorized !== true) {
+        return success(res, { canReceive: false, reason: "not_authorized" });
+      }
+
       const currentBalance = parseFloat(trustline.balance || "0");
       const limit = parseFloat(trustline.limit || "0");
       const buyingLiabilities = parseFloat(trustline.buying_liabilities || "0");
@@ -2783,29 +2771,11 @@ router.get(
         limit - currentBalance - buyingLiabilities,
       );
 
-      const canReceive = isAuthorized && availableCapacity > 0;
-
-      const reasons = [];
-      if (!isAuthorized) {
-        reasons.push("Trustline is not authorized by the issuer.");
-      }
-      if (isAuthorized && availableCapacity <= 0) {
-        reasons.push(
-          "No available capacity on trustline (limit reached or fully utilized).",
-        );
+      if (availableCapacity <= 0) {
+        return success(res, { canReceive: false, reason: "limit_reached" });
       }
 
-      return success(res, {
-        accountId: account.id,
-        asset: normalizeAsset(normalizedAssetCode, assetIssuer, undefined),
-        canReceive,
-        reasons,
-        trustlineExists: true,
-        isAuthorized,
-        availableCapacity,
-        currentBalance,
-        limit,
-      });
+      return success(res, { canReceive: true, reason: null });
     } catch (err) {
       handleAccountNotFound(err, next, req.params.id);
     }

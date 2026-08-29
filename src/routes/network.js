@@ -309,4 +309,72 @@ router.get("/fee-percentiles", async (req, res, next) => {
   }
 });
 
+const RECOMMENDED_FEE_CACHE_TTL = 5;
+
+function estimateConfirmationLedgers(tier, capacityUsage) {
+  if (tier === "high") {
+    return 1;
+  }
+  if (tier === "medium") {
+    return capacityUsage > 0.75 ? 2 : 1;
+  }
+  if (capacityUsage > 0.75) {
+    return 3;
+  }
+  if (capacityUsage > 0.5) {
+    return 2;
+  }
+  return 1;
+}
+
+function buildRecommendedFeeTier(stroops, tier, capacityUsage) {
+  return {
+    feeStroops: String(stroops),
+    feeXLM: parseStellarAmount(stroops),
+    estimatedConfirmationLedgers: estimateConfirmationLedgers(tier, capacityUsage),
+  };
+}
+
+/**
+ * GET /network/recommended-fee
+ *
+ * Returns low, medium, and high priority fee options with estimated confirmation times.
+ * Cached for 5 seconds.
+ */
+router.get("/recommended-fee", async (req, res, next) => {
+  try {
+    const cacheKey = "network-recommended-fee";
+    const fresh = isFreshRequest(req.query);
+
+    if (!fresh) {
+      const cached = cacheService.get(cacheKey);
+      if (cached) {
+        res.set("X-Cache", "HIT");
+        return success(res, cached);
+      }
+    }
+
+    const feeStats = await withHorizonTiming(req, () => server.feeStats());
+    const feeCharged = feeStats.fee_charged || {};
+    const capacityUsage = parseFloat(feeStats.ledger_capacity_usage || 0);
+
+    const lowStroops = parseStroops(feeCharged.min);
+    const mediumStroops = parseStroops(feeCharged.p50);
+    const highStroops = parseStroops(feeCharged.p95);
+
+    const data = {
+      low: buildRecommendedFeeTier(lowStroops, "low", capacityUsage),
+      medium: buildRecommendedFeeTier(mediumStroops, "medium", capacityUsage),
+      high: buildRecommendedFeeTier(highStroops, "high", capacityUsage),
+    };
+
+    cacheService.set(cacheKey, data, RECOMMENDED_FEE_CACHE_TTL);
+
+    res.set("X-Cache", "MISS");
+    return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
