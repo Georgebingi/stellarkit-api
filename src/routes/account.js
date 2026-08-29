@@ -1340,6 +1340,100 @@ router.get("/:id/offers", async (req, res, next) => {
 
 
 /**
+ * GET /account/:id/history
+ * Returns a unified account activity feed combining recent operations and effects.
+ *
+ * Query params:
+ *   - limit (default 20, max 100)
+ *   - order (asc|desc, default desc)
+ */
+router.get("/:id/history", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateAccountId(id);
+
+    const limit = validateLimit(req.query.limit ?? 20, 100);
+    const order = (req.query.order || "desc").toLowerCase();
+    if (order !== "asc" && order !== "desc") {
+      const err = new Error("Query parameter 'order' must be either 'asc' or 'desc'.");
+      err.isValidation = true;
+      err.field = "order";
+      err.receivedValue = String(req.query.order);
+      err.expectedFormat = "asc or desc";
+      throw err;
+    }
+
+    const operationQuery = server
+      .operations()
+      .forAccount(id)
+      .limit(limit)
+      .order(order);
+
+    const effectQuery = server
+      .effects()
+      .forAccount(id)
+      .limit(limit)
+      .order(order);
+
+    const [operationsResponse, effectsResponse] = await Promise.all([
+      operationQuery.call(),
+      effectQuery.call(),
+    ]);
+
+    const operationItems = (operationsResponse.records || []).map((op) => ({
+      id: op.id || `${op.paging_token || op.transaction_hash || "op"}`,
+      type: op.type,
+      category: "operation",
+      account: op.source_account || id,
+      createdAt: toISOTimestamp(op.created_at),
+      transactionHash: op.transaction_hash || null,
+      sourceAccount: op.source_account || null,
+      asset: op.asset_code || op.asset || null,
+      amount: op.amount || op.starting_balance || null,
+      from: op.from || null,
+      to: op.to || null,
+      pagingToken: op.paging_token || null,
+      raw: op,
+    }));
+
+    const effectItems = (effectsResponse.records || []).map((effect) => ({
+      id: effect.id || effect.paging_token || effect.transaction_hash || "effect",
+      type: effect.type,
+      category: "effect",
+      account: effect.account || id,
+      createdAt: toISOTimestamp(effect.created_at),
+      transactionHash: effect.transaction_hash || null,
+      asset: effect.asset || null,
+      amount: effect.amount || effect.starting_balance || null,
+      balance: effect.balance || null,
+      limit: effect.limit || null,
+      seller: effect.seller || null,
+      offerId: effect.offer_id || null,
+      trustor: effect.trustor || null,
+      trustee: effect.trustee || null,
+      pagingToken: effect.paging_token || null,
+      raw: effect,
+    }));
+
+    const merged = [...operationItems, ...effectItems].sort((a, b) => {
+      const left = new Date(a.createdAt || 0).getTime();
+      const right = new Date(b.createdAt || 0).getTime();
+      return order === "asc" ? left - right : right - left;
+    });
+
+    const items = merged.slice(0, limit);
+
+    return success(res, {
+      items,
+      total: merged.length,
+      limit,
+      order,
+      cursor: null,
+    });
+  } catch (err) {
+    handleAccountNotFound(err, next, req.params.id);
+  }
+});
  * Builds a normalized { code, issuer, type } asset shape from a raw Horizon
  * effect record. Returns null when the effect carries no asset information.
  *
