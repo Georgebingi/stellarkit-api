@@ -10,6 +10,7 @@ const { parseStellarAsset, normalizeAsset } = require("../utils/asset");
 const { isNativeAsset } = require("../utils/assetHelpers");
 const cacheService = require("../services/cache");
 const cacheTTL = require("../config/cacheConfig");
+const { makeOrderBookEmptyError } = require("../utils/errors");
 
 /**
  * @route GET /dex/arbitrage/:assetCode/:assetIssuer

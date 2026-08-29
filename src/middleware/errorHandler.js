@@ -187,7 +187,7 @@ function withRequestId(body, req) {
 
 function errorHandler(err, req, res, next) {
   if (isConnectionError(err)) {
-    const ske = new StellaKitError(
+    const ske = new StellarKitError(
       "Unable to connect to the Stellar Horizon node.",
       503,
       "HorizonUnavailable",
@@ -204,7 +204,7 @@ function errorHandler(err, req, res, next) {
   if (err?.isOfferNotFound || isOfferNotFoundError(err)) {
     const offerId = err?.offerId || "unknown";
     const message = `Offer '${offerId}' was not found on the Stellar ${NETWORK} network.`;
-    const ske = new StellaKitError(
+    const ske = new StellarKitError(
       message,
       404,
       "OfferNotFound",
@@ -275,8 +275,8 @@ function errorHandler(err, req, res, next) {
     return errorResponse(res, status, withRequestId(body, req));
   }
 
-  // StellaKitError instances — already structured
-  if (err instanceof StellaKitError) {
+  // StellarKitError instances — already structured
+  if (err instanceof StellarKitError) {
     logError(err.statusCode, req, err.message);
     return errorResponse(res, err.statusCode, withRequestId({
       success: false,
@@ -298,7 +298,7 @@ function errorHandler(err, req, res, next) {
   // Payload too large errors from body parsers
   if (err.type === "entity.too.large" || err.status === 413) {
     const maxBodySize = process.env.MAX_BODY_SIZE || "10kb";
-    const ske = new StellaKitError(
+    const ske = new StellarKitError(
       `Payload too large. Maximum request body size is ${maxBodySize}.`,
       413,
       "PayloadTooLargeError",

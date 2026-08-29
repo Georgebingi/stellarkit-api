@@ -127,6 +127,29 @@ export interface ValidatorsResponse {
   ungrouped: Validator[];
 }
 
+// ── Base fee types ───────────────────────────────────────────────────────────
+
+/**
+ * Current network base fee, as returned by GET /network/base-fee.
+ *
+ * Fields mirror the server-side normalisation:
+ *   - baseFeeStroops — base fee of the last closed ledger, in stroops
+ *   - baseFeeXLM     — the same fee as a seven-decimal XLM string
+ *   - isSurge        — true when the network is charging above the minimum
+ *                      fee, or ledger capacity usage is above 50%
+ *   - ledgerSequence — sequence of the ledger the fee was read from, or null
+ *   - ledgerClosedAt — ISO timestamp of that ledger's close, or null
+ *   - note           — human-readable note describing the units
+ */
+export interface BaseFee {
+  baseFeeStroops: number;
+  baseFeeXLM: string;
+  isSurge: boolean;
+  ledgerSequence: number | null;
+  ledgerClosedAt: string | null;
+  note: string;
+}
+
 // ── Generic paginated response wrapper ──────────────────────────────────────
 
 /**

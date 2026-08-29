@@ -29,6 +29,7 @@ const sanitize = require("./middleware/sanitize");
 const rejectDuplicateQueryParams = require("./middleware/rejectDuplicateQueryParams");
 const coerceQueryParams = require("./middleware/coerceQueryParams");
 const etagMiddleware = require("./middleware/etag");
+const routeCounter = require("./middleware/routeCounter");
 const metricsService = require("./services/metrics");
 const routeCounter = require("./middleware/routeCounter");
 
